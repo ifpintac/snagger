@@ -25,6 +25,8 @@ enum Act {
     Copy,
     Page,
     Forget,
+    Transcript,
+    OpenTranscript,
 }
 
 const ROW_H: f32 = 60.0;
@@ -121,6 +123,31 @@ impl HistoryUi {
                     drop(c);
                     platform::open_url(&h.url);
                 }
+                Act::Transcript => {
+                    drop(c);
+                    if let Some(media) = h.files.first() {
+                        if media.exists() {
+                            crate::transcript::get_in_background(
+                                hub,
+                                h.url.clone(),
+                                h.title.clone(),
+                                media.clone(),
+                                h.opts.clip,
+                            );
+                        } else {
+                            toast = Some("That file has been moved or deleted.".into());
+                        }
+                    }
+                }
+                Act::OpenTranscript => {
+                    drop(c);
+                    match h.files.first().and_then(|m| crate::transcript::existing(m)) {
+                        Some(p) => {
+                            platform::open_path(&p);
+                        }
+                        None => toast = Some("That transcript has been moved or deleted.".into()),
+                    }
+                }
                 Act::Open | Act::Reveal => {
                     drop(c);
                     match h.target().filter(|t| t.exists()) {
@@ -182,7 +209,7 @@ fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act>
     });
     row.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = t.s(1);
-        widgets::more_menu(ui, |ui| menu_items(ui, &mut act));
+        widgets::more_menu(ui, |ui| menu_items(ui, h, &mut act));
         if icon_button(ui, Icon::Refresh, "Download again").clicked() {
             act = Some(Act::Again);
         }
@@ -198,17 +225,24 @@ fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act>
     if resp.double_clicked() && exists {
         act = Some(Act::Open);
     }
-    widgets::context_menu(&resp, |ui| menu_items(ui, &mut act));
+    widgets::context_menu(&resp, |ui| menu_items(ui, h, &mut act));
     act
 }
 
-fn menu_items(ui: &mut Ui, act: &mut Option<Act>) {
-    for (icon, text, a) in [
-        (Icon::Refresh, "Download again", Act::Again),
-        (Icon::Copy, "Copy link", Act::Copy),
-        (Icon::Globe, "Open the page", Act::Page),
-        (Icon::Trash, "Remove from history", Act::Forget),
-    ] {
+fn menu_items(ui: &mut Ui, h: &HistoryItem, act: &mut Option<Act>) {
+    // One video from a page: its captions can be read for a transcript.
+    let transcript = (h.files.len() == 1 && !h.opts.direct).then(|| match crate::transcript::existing(&h.files[0]) {
+        Some(_) => (Icon::Page, "Open transcript", Act::OpenTranscript),
+        None => (Icon::Page, "Get transcript", Act::Transcript),
+    });
+    let items = [
+        Some((Icon::Refresh, "Download again", Act::Again)),
+        transcript,
+        Some((Icon::Copy, "Copy link", Act::Copy)),
+        Some((Icon::Globe, "Open the page", Act::Page)),
+        Some((Icon::Trash, "Remove from history", Act::Forget)),
+    ];
+    for (icon, text, a) in items.into_iter().flatten() {
         if menu_item(ui, Some(icon), text).clicked() {
             *act = Some(a);
         }

@@ -199,11 +199,19 @@ fn extras_section(ui: &mut Ui, s: &mut Settings) {
                 ],
             );
         });
-        if s.subtitles != SubsMode::Off {
+        setting_row(
+            ui,
+            "Transcripts",
+            "A .txt of what's said, with times, next to each video. Made from the site's captions (YouTube nearly always has them), in the language that's spoken. Finished downloads have “Get transcript” in their ⋮ menu.",
+            |ui| {
+                checkbox(ui, &mut s.transcripts, "Save a transcript next to each video");
+            },
+        );
+        if s.subtitles != SubsMode::Off || s.transcripts {
             setting_row(
                 ui,
                 "Languages",
-                "Comma-separated codes. en.* matches every English variant; all gets everything.",
+                "Comma-separated codes. en.* matches every English variant; all gets everything (transcripts skip all).",
                 |ui| {
                     widgets::input(ui, egui::TextEdit::singleline(&mut s.sub_langs), None, 200.0);
                     checkbox(ui, &mut s.auto_subs, "Include auto-generated captions");

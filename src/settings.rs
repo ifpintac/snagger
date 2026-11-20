@@ -110,6 +110,8 @@ pub struct Settings {
     pub notify_done: bool,
 
     pub subtitles: SubsMode,
+    /// Save a .txt transcript (from the captions) next to each video.
+    pub transcripts: bool,
     pub sub_langs: String,
     pub auto_subs: bool,
     pub embed_thumbnail: bool,
@@ -158,6 +160,7 @@ impl Default for Settings {
             keep_awake: true,
             notify_done: true,
             subtitles: SubsMode::Off,
+            transcripts: true,
             sub_langs: "en.*,en".into(),
             auto_subs: false,
             embed_thumbnail: true,

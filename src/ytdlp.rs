@@ -58,7 +58,7 @@ fn common_args(s: &Settings, p: &EnginePaths, args: &mut Vec<OsString>) {
 const P_TMPL: &str = "download:SNAG:P\t%(progress.{status,downloaded_bytes,total_bytes,total_bytes_estimate,speed,eta,fragment_index,fragment_count})j\t%(info.{format_id,vcodec,playlist_autonumber})j";
 const PP_TMPL: &str = "postprocess:SNAG:PP\t%(progress.{status,postprocessor})j";
 const I_TMPL: &str = "before_dl:SNAG:I\t%(.{id,title,uploader,channel,duration,thumbnail,webpage_url,extractor_key,playlist_title,playlist_autonumber,n_entries,is_live})j\t%(requested_formats.:.{format_id,vcodec,filesize,filesize_approx})j";
-const F_TMPL: &str = "after_move:SNAG:F\t%(.{filepath,id,playlist_autonumber,n_entries})j";
+const F_TMPL: &str = "after_move:SNAG:F\t%(.{filepath,id,playlist_autonumber,n_entries,webpage_url})j";
 
 /// `%` is special in output templates.
 fn tmpl_escape(s: &str) -> String {
@@ -318,6 +318,35 @@ pub fn download_args(job: &Job, s: &Settings, p: &EnginePaths, staging: &Path, a
     }
     a.push("--".into());
     a.push(job.url.clone().into());
+    a
+}
+
+/// Fetches only a video's captions (for its transcript) into `out` as
+/// `t.<lang>.vtt`. The video itself isn't downloaded again.
+pub fn caption_args(url: &str, s: &Settings, p: &EnginePaths, out: &Path, langs: &str) -> Vec<OsString> {
+    let mut a: Vec<OsString> = Vec::new();
+    common_args(s, p, &mut a);
+    push(
+        &mut a,
+        &[
+            "--skip-download",
+            "--no-playlist",
+            "--ignore-no-formats-error",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            langs,
+            "--sub-format",
+            "vtt/srt/best",
+        ],
+    );
+    if p.ffmpeg.is_some() {
+        push(&mut a, &["--convert-subs", "vtt"]);
+    }
+    a.push("--paths".into());
+    a.push(out.as_os_str().to_owned());
+    push(&mut a, &["-o", "t.%(ext)s", "--"]);
+    a.push(url.into());
     a
 }
 

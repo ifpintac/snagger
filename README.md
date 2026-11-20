@@ -9,7 +9,7 @@ and the file lands in `Downloads\Snagger`.
 
 ## Look
 
-Snagger 2.4 looks like a command console: one pale ice-blue line colour on
+Snagger 2.5 looks like a command console: one pale ice-blue line colour on
 near-black, hairline modules, clipped-corner frames and keys that light up.
 Dark by default; Settings → Theme has a light version too. The design notes
 (tokens, audit, test tasks) are in `docs/design-console.md`, with screenshots
@@ -57,6 +57,11 @@ checked for a file too.
 - Optional subtitles (embedded or `.srt`), cover art, tags and chapters,
   SponsorBlock cutting, plain ASCII file names, custom name templates,
   sorting into folders by site or uploader.
+- **Transcripts**: a `.transcript.txt` of what's said, with a time at the
+  start of each paragraph, saved next to each video (on by default; Settings →
+  Subtitles, artwork and tags). Made from the site's captions in the language
+  that's spoken; YouTube's repeating automatic captions are cleaned up. Older
+  downloads have "Get transcript" in their ⋮ menu (Downloads and History).
 
 **The queue**
 - Runs 1 to 10 downloads at once (3 by default); the rest wait their turn.

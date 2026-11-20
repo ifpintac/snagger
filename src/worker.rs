@@ -20,6 +20,7 @@ use crate::hub::Hub;
 use crate::model::{Control, Live, STOP_CANCEL, STOP_NONE, STOP_PAUSE, Stage, Status};
 use crate::platform::{self, ProcGroup};
 use crate::settings;
+use crate::transcript;
 use crate::util;
 use crate::ytdlp::{self, Line};
 
@@ -47,6 +48,8 @@ struct Tracker {
     parts: Vec<Part>,
     flatten: bool,
     subscription: bool,
+    /// Files this run finished, with the page each came from.
+    made: Vec<(PathBuf, String)>,
     last_repaint: Instant,
 }
 
@@ -156,6 +159,7 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
         parts: Vec::new(),
         flatten: false,
         subscription: is_sub,
+        made: Vec::new(),
         last_repaint: Instant::now(),
     };
     let stdout = child.stdout.take().expect("piped");
@@ -191,6 +195,9 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
             Line::File(f) => {
                 let media = f["filepath"].as_str().map(PathBuf::from);
                 let moved = move_out(&out_dir, &dest, media.as_deref(), t.flatten);
+                if let Some(page) = f["webpage_url"].as_str() {
+                    t.made.extend(moved.media.iter().map(|m| (m.clone(), page.to_string())));
+                }
                 let n = t.n.max(1);
                 if let Some(j) = hub.lock().job_mut(id) {
                     j.items_done += 1;
@@ -208,6 +215,10 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
     }
     let status = child.wait().ok();
     let _ = err_thread.join();
+    let code = status.and_then(|s| s.code());
+    if matches!(code, Some(0) | Some(101)) && ctl.stop() == STOP_NONE {
+        make_transcripts(hub, id, ctl, &t.made);
+    }
 
     // Anything yt-dlp finished but didn't report (it shouldn't happen).
     let moved = move_out(&out_dir, &dest, None, t.flatten);
@@ -215,7 +226,49 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
         apply_moved(j, moved);
     }
     let errs = errors.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    finish(hub, id, ctl, status.and_then(|s| s.code()), errs, &staging, &browser, None);
+    finish(hub, id, ctl, code, errs, &staging, &browser, None);
+}
+
+/// After the download: a transcript next to each new file, from its captions.
+/// A missing transcript never fails the download; the log says why.
+fn make_transcripts(hub: &Hub, id: &str, ctl: &Arc<Control>, made: &[(PathBuf, String)]) {
+    let (settings, paths, clip, title) = {
+        let c = hub.lock();
+        let clip = c.job(id).and_then(|j| j.opts.clip);
+        // File names can be shortened; one video's transcript gets its full title.
+        let title = c.job(id).filter(|_| made.len() == 1).map(|j| j.display_title()).unwrap_or_default();
+        (c.settings.clone(), c.engine.paths(), clip, title)
+    };
+    let (true, Some(paths)) = (settings.transcripts, paths) else { return };
+    for (i, (media, url)) in made.iter().enumerate() {
+        if ctl.stop() != STOP_NONE {
+            return;
+        }
+        if let Some(j) = hub.lock().job_mut(id) {
+            j.live.stage = Stage::Processing;
+            j.live.speed = None;
+            j.live.eta = None;
+            j.live.phase = if made.len() > 1 {
+                format!("Getting transcripts ({} of {})", i + 1, made.len())
+            } else {
+                "Getting the transcript".into()
+            };
+        }
+        hub.repaint();
+        let req = transcript::Request { url, title: &title, media, clip: if made.len() == 1 { clip } else { None } };
+        let outcome = transcript::from_captions(&req, &settings, &paths, ctl);
+        if let Some(j) = hub.lock().job_mut(id) {
+            match outcome {
+                Ok(Some(path)) => {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    j.push_log(format!("Transcript saved: {name}"));
+                    j.extras.push(path);
+                }
+                Ok(None) => j.push_log("No transcript: this video has no captions.".into()),
+                Err(e) => j.push_log(format!("No transcript: {e}")),
+            }
+        }
+    }
 }
 
 /// Before a video downloads: does it fit? Only when yt-dlp knows the sizes.
@@ -490,10 +543,11 @@ fn finish(
                 j.control = None;
                 j.live = Live::default();
                 let unique: BTreeSet<&String> = errors.iter().collect();
-                if stop == STOP_PAUSE {
+                let downloaded = matches!(code, Some(0) | Some(101));
+                if stop == STOP_PAUSE && !downloaded {
                     j.status = Status::Paused;
                     j.push_log("Paused.".into());
-                } else if stop == STOP_CANCEL {
+                } else if stop == STOP_CANCEL && !downloaded {
                     j.status = Status::Cancelled;
                     j.finished = util::now();
                     j.push_log("Cancelled.".into());

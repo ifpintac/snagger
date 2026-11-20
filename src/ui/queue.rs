@@ -41,6 +41,8 @@ enum Act {
     OpenPage,
     Log,
     UpdateRetry,
+    Transcript,
+    OpenTranscript,
 }
 
 #[derive(Default)]
@@ -422,6 +424,25 @@ impl QueueUi {
                 Act::Top => c.move_to_top(&id),
                 Act::Bottom => c.move_to_bottom(&id),
                 Act::Log => outcome = Some(Outcome::ShowLog(id.clone())),
+                Act::Transcript => {
+                    if let Some(j) = c.job(&id)
+                        && let Some(media) = j.files.first()
+                    {
+                        let (url, title, media, clip) = (j.url.clone(), j.display_title(), media.clone(), j.opts.clip);
+                        drop(c);
+                        crate::transcript::get_in_background(hub, url, title, media, clip);
+                    }
+                }
+                Act::OpenTranscript => {
+                    let path = c.job(&id).and_then(|j| j.files.first()).and_then(|m| crate::transcript::existing(m));
+                    drop(c);
+                    match path {
+                        Some(p) => {
+                            platform::open_path(&p);
+                        }
+                        None => outcome = Some(Outcome::Toast("That transcript has been moved or deleted.".into())),
+                    }
+                }
                 Act::UpdateRetry => {
                     c.resume(&id);
                     drop(c);
@@ -683,6 +704,14 @@ fn row_menu(ui: &mut Ui, j: &Job, act: &mut Option<Act>) {
     }
     if j.status.is_finished() {
         item(ui, Icon::Refresh, "Download again", Act::Redo);
+    }
+    // One video, downloaded by yt-dlp: it has a page to read captions from.
+    if j.status == Status::Done && j.files.len() == 1 && !j.opts.direct {
+        if crate::transcript::existing(&j.files[0]).is_some() {
+            item(ui, Icon::Page, "Open transcript", Act::OpenTranscript);
+        } else {
+            item(ui, Icon::Page, "Get transcript", Act::Transcript);
+        }
     }
     item(ui, Icon::Copy, "Copy link", Act::CopyLink);
     item(ui, Icon::Globe, "Open the page", Act::OpenPage);
