@@ -43,7 +43,7 @@ enum Act {
     Remove,
 }
 
-const ROW_H: f32 = 64.0;
+const ROW_H: f32 = 60.0;
 
 impl SubsUi {
     /// Finished "follow" requests. Returns a message for a toast.
@@ -303,16 +303,7 @@ impl SubsUi {
 fn sub_row(ui: &mut Ui, s: &Subscription, busy: bool, thumbs: &mut Thumbs, dir: &std::path::Path) -> Option<Act> {
     let t = tk(ui);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-    let bg = rect.shrink2(vec2(t.s(1) + 2.0, 3.0));
-    let hover = ui.ctx().animate_bool_with_time(
-        resp.id.with("hover"),
-        resp.hovered(),
-        if super::theme::reduced_motion() { 0.0 } else { t.dur_fast },
-    );
-    if hover > 0.0 {
-        widgets::raised_faded(ui.painter(), bg, t.r_md, t.surface, hover, t);
-    }
-    let inner = bg.shrink2(vec2(t.s(3), t.s(1)));
+    let inner = widgets::list_row(ui, rect, &resp, false);
     let mut row = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
     let tex = thumbs.get(&s.thumb);
     widgets::thumb(&mut row, tex.as_ref(), vec2(86.0, 48.0), Icon::Feed);

@@ -14,7 +14,8 @@ mod thumbs;
 mod widgets;
 
 use eframe::egui::{
-    self, Align, Align2, CornerRadius, Event, FontId, Id, Label, Layout, Sense, Stroke, Ui, ViewportCommand, vec2,
+    self, Align, Align2, Color32, CornerRadius, Event, FontId, Id, Label, Layout, Rect, Sense, Stroke, Ui,
+    ViewportCommand, vec2,
 };
 
 use crate::hub::Hub;
@@ -180,6 +181,8 @@ impl eframe::App for SnagApp {
                 .jobs
                 .iter()
                 .map(|j| j.title.as_str())
+                // File names are shown in monospace and can hold glyphs a title doesn't (e.g. a full-width colon).
+                .chain(c.jobs.iter().flat_map(|j| j.files.iter().filter_map(|f| f.file_name()?.to_str())))
                 .chain(c.history.iter().take(300).map(|h| h.title.as_str()))
                 .chain(c.subs.iter().map(|s| s.title.as_str()))
                 .chain(self.dl.preview_texts());
@@ -202,11 +205,15 @@ impl eframe::App for SnagApp {
         self.global_paste(&ctx);
         let t = tk(ui);
         let fill = t.bg;
-        let side = t.s(6) as i8;
+        let side = t.s(4) as i8;
 
         egui::Panel::top("top")
             .show_separator_line(false)
-            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(side, t.s(4) as i8)).fill(fill))
+            .frame(
+                egui::Frame::new()
+                    .inner_margin(egui::Margin { left: side, right: side, top: t.s(2) as i8, bottom: t.s(1) as i8 })
+                    .fill(fill),
+            )
             .show(ui, |ui| self.top_bar(ui));
         egui::Panel::bottom("status")
             .show_separator_line(false)
@@ -215,35 +222,37 @@ impl eframe::App for SnagApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .inner_margin(egui::Margin { left: side, right: side, top: t.s(2) as i8, bottom: t.s(2) as i8 })
+                    .inner_margin(egui::Margin { left: side, right: side, top: t.s(1) as i8, bottom: 0 })
                     .fill(fill),
             )
             .show(ui, |ui| {
-                self.banners(ui);
-                self.clip_offer(ui);
-                match self.tab {
-                    Tab::Downloads => {
-                        let setting_up = {
-                            let c = self.hub.lock();
-                            c.engine.setting_up || (c.engine.ready && c.engine.ytdlp.is_none())
-                        };
-                        if setting_up {
-                            setup::show(ui, &self.hub);
-                        } else if let Some(out) = self.dl.show(ui, &self.hub, &mut self.thumbs) {
-                            match out {
-                                downloads::Outcome::ShowLog(id) => self.log_for = Some(id),
-                                downloads::Outcome::Toast(msg) => self.toast(&ctx, msg),
+                widgets::work_area(ui, |ui| {
+                    self.banners(ui);
+                    self.clip_offer(ui);
+                    match self.tab {
+                        Tab::Downloads => {
+                            let setting_up = {
+                                let c = self.hub.lock();
+                                c.engine.setting_up || (c.engine.ready && c.engine.ytdlp.is_none())
+                            };
+                            if setting_up {
+                                setup::show(ui, &self.hub);
+                            } else if let Some(out) = self.dl.show(ui, &self.hub, &mut self.thumbs) {
+                                match out {
+                                    downloads::Outcome::ShowLog(id) => self.log_for = Some(id),
+                                    downloads::Outcome::Toast(msg) => self.toast(&ctx, msg),
+                                }
                             }
                         }
-                    }
-                    Tab::History => {
-                        if let Some(msg) = self.hist.show(ui, &self.hub, &mut self.thumbs, &mut self.confirm) {
-                            self.toast(&ctx, msg);
+                        Tab::History => {
+                            if let Some(msg) = self.hist.show(ui, &self.hub, &mut self.thumbs, &mut self.confirm) {
+                                self.toast(&ctx, msg);
+                            }
                         }
+                        Tab::Subscriptions => self.subs.show(ui, &self.hub, &mut self.thumbs, &mut self.confirm),
+                        Tab::Settings => settings_tab::show(ui, &self.hub, &mut self.confirm),
                     }
-                    Tab::Subscriptions => self.subs.show(ui, &self.hub, &mut self.thumbs, &mut self.confirm),
-                    Tab::Settings => settings_tab::show(ui, &self.hub, &mut self.confirm),
-                }
+                })
             });
 
         self.dl.batch_dialog(&ctx, &self.hub);
@@ -314,9 +323,9 @@ impl SnagApp {
                 let r = widgets::tab(ui, self.tab == tab, ic, &text);
                 let r = if tab == Tab::Downloads && n_failed > 0 {
                     // A small dot when something failed (the tooltip says how many).
-                    let dot = r.rect.right_top() + vec2(-t.s(2), t.s(2));
-                    ui.painter().circle_filled(dot, 4.0, t.danger);
-                    ui.painter().circle_stroke(dot, 4.0, Stroke::new(1.5, t.bg));
+                    let dot = Rect::from_center_size(r.rect.right_top() + vec2(-t.s(2), t.s(2)), vec2(6.0, 6.0));
+                    ui.painter().rect_filled(dot.expand(1.5), CornerRadius::ZERO, t.bg);
+                    ui.painter().rect_filled(dot, CornerRadius::ZERO, t.danger_text);
                     r.on_hover_text(format!("{n_failed} failed"))
                 } else {
                     r
@@ -329,12 +338,12 @@ impl SnagApp {
                 let color = if engine_busy {
                     t.warning_text
                 } else if engine_label == "Engine missing" {
-                    t.danger
+                    t.danger_text
                 } else {
                     t.success_text
                 };
                 widgets::dot(ui, color);
-                let l = ui.add(Label::new(muted(ui, engine_label)).sense(Sense::click()));
+                let l = ui.add(Label::new(widgets::mono(ui, engine_label)).sense(Sense::click()));
                 if l.on_hover_text(engine_tip).clicked() {
                     self.tab = Tab::Settings;
                 }
@@ -372,17 +381,17 @@ impl SnagApp {
             if parts.is_empty() {
                 parts.push("Ready".into());
             }
-            ui.label(muted(ui, parts.join("  ·  ")));
+            ui.label(widgets::mono(ui, parts.join("  ·  ")));
             if !note.is_empty() {
-                ui.label(muted(ui, format!("  ·  {}", util::ellipsize(&note, 90))));
+                ui.label(widgets::mono(ui, format!("  ·  {}", util::ellipsize(&note, 90))));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some(free) = self.free_space {
-                    ui.label(muted(ui, format!("{} free", util::fmt_bytes(free as f64))));
-                    ui.label(muted(ui, "·"));
+                    ui.label(widgets::mono(ui, format!("{} free", util::fmt_bytes(free as f64))));
+                    ui.label(widgets::mono(ui, "·"));
                 }
                 let shown = util::ellipsize(&dir.display().to_string(), 60);
-                let r = ui.add(Label::new(muted(ui, shown)).sense(Sense::click()));
+                let r = ui.add(Label::new(widgets::mono(ui, shown)).sense(Sense::click()));
                 let t = tk(ui);
                 icons::show(ui, Icon::Folder, t.s(4), t.text2);
                 if r.on_hover_text("Open the download folder").clicked() {
@@ -576,7 +585,7 @@ impl SnagApp {
             ),
         };
         let mut decided: Option<bool> = None;
-        let modal = egui::Modal::new(Id::new("confirm")).frame(widgets::dialog_frame(ctx)).show(ctx, |ui| {
+        let modal = widgets::modal(ctx, Id::new("confirm"), |ui| {
             let t = tk(ui);
             ui.set_width(400.0);
             widgets::heading(ui, &title);
@@ -634,7 +643,10 @@ impl SnagApp {
             }
         };
         let mut open = true;
-        egui::Window::new(egui::RichText::new("Log").family(bold()))
+        let tt = theme::tk_ctx(ctx);
+        let log_title =
+            egui::RichText::new("LOG").family(bold()).size(tt.fs_xs).extra_letter_spacing(tt.tracking(tt.fs_xs));
+        egui::Window::new(log_title)
             .id(Id::new("log-window"))
             .open(&mut open)
             .default_size(vec2(720.0, 420.0))
@@ -677,16 +689,10 @@ impl SnagApp {
             .show(ctx, |ui| {
                 let t = tk(ui);
                 for (msg, _) in &self.toasts {
-                    egui::Frame::new()
-                        .fill(t.surface)
-                        .stroke(Stroke::new(1.0, t.border))
-                        .shadow(t.shadow_overlay)
-                        .corner_radius(CornerRadius::same(t.r_md as u8))
-                        .inner_margin(egui::Margin::symmetric(t.padx as i8, t.s(3) as i8))
-                        .show(ui, |ui| {
-                            ui.set_max_width(380.0);
-                            ui.add(Label::new(egui::RichText::new(msg).color(t.text)).wrap());
-                        });
+                    widgets::toast_frame(ui, |ui| {
+                        ui.set_max_width(380.0);
+                        ui.add(Label::new(egui::RichText::new(msg).color(t.text)).wrap());
+                    });
                     ui.add_space(t.s(2));
                 }
             });
@@ -701,19 +707,24 @@ impl SnagApp {
         let rect = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("drop")));
         painter.rect_filled(rect, CornerRadius::ZERO, t.bg.gamma_multiply(0.94));
-        painter.rect_stroke(
+        painter.add(widgets::clipped_shape(
             rect.shrink(t.s(4)),
-            CornerRadius::same(t.r_lg as u8),
-            Stroke::new(2.0, t.accent),
-            egui::StrokeKind::Inside,
+            t.s(4),
+            Color32::TRANSPARENT,
+            Stroke::new(t.bw, t.accent),
+        ));
+        icons::paint_at(&painter, Icon::Download, rect.center() - vec2(0.0, t.s(8)), t.icon_size * 2.0, t.text);
+        let size = t.fs_xl * t.heading_scale;
+        let job = egui::text::LayoutJob::single_section(
+            "DROP TO ADD THE LINKS IN THIS FILE".into(),
+            egui::TextFormat {
+                font_id: FontId::new(size, theme::head()),
+                extra_letter_spacing: t.tracking(size),
+                color: t.text,
+                ..Default::default()
+            },
         );
-        icons::paint_at(&painter, Icon::Download, rect.center() - vec2(0.0, t.s(8)), t.icon_size * 2.0, t.text2);
-        painter.text(
-            rect.center() + vec2(0.0, t.s(2)),
-            Align2::CENTER_CENTER,
-            "Drop to add the links in this file",
-            FontId::new(t.fs_xl, bold()),
-            t.text,
-        );
+        let g = painter.layout_job(job);
+        painter.galley(rect.center() + vec2(-g.size().x / 2.0, t.s(2) - g.size().y / 2.0), g, t.text);
     }
 }

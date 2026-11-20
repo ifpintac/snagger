@@ -664,7 +664,7 @@ impl DownloadsUi {
         let mut add = false;
         let mut cancel = false;
         let mut import = false;
-        let modal = egui::Modal::new(Id::new("batch")).frame(widgets::dialog_frame(ctx)).show(ctx, |ui| {
+        let modal = widgets::modal(ctx, Id::new("batch"), |ui| {
             let t = tk(ui);
             ui.set_width(640.0);
             widgets::icon_heading(ui, Icon::AddMany, "Add many links");
@@ -690,7 +690,10 @@ impl DownloadsUi {
             };
             let mut extra = String::new();
             if files > 0 {
-                extra.push_str(&format!(" · {files} plain file{} (Snag's own engine)", if files == 1 { "" } else { "s" }));
+                extra.push_str(&format!(
+                    " · {files} plain file{} (Snag's own engine)",
+                    if files == 1 { "" } else { "s" }
+                ));
             }
             if queued > 0 {
                 extra.push_str(&format!(" · {queued} already in the queue (skipped)"));
@@ -699,7 +702,11 @@ impl DownloadsUi {
             ui.add_space(t.s(3));
             preset_picker(ui, "batch", &mut b.preset);
             ui.add_space(t.s(1));
-            widgets::checkbox(ui, &mut b.whole, "When a link is a video inside a playlist, download the whole playlist");
+            widgets::checkbox(
+                ui,
+                &mut b.whole,
+                "When a link is a video inside a playlist, download the whole playlist",
+            );
             ui.add_space(t.s(5));
             ui.horizontal(|ui| {
                 if Button::secondary("Import from file…").icon(Icon::Import).show(ui).clicked() {
@@ -869,7 +876,8 @@ fn footer(ui: &mut Ui, download_dir: &std::path::Path, label: &str, icon: Option
         ui.allocate_ui_with_layout(vec2(w, t.ctrl), Layout::left_to_right(Align::Center), |ui| {
             ui.set_max_width(w);
             icons::show(ui, Icon::Folder, t.icon_size, t.text2);
-            ui.add(Label::new(muted(ui, format!("Saves to {}", download_dir.display()))).truncate());
+            ui.label(muted(ui, "Saves to"));
+            ui.add(Label::new(widgets::mono(ui, download_dir.display().to_string())).truncate());
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut b = Button::primary(label).enabled(enabled).min_width(140.0);
@@ -908,7 +916,7 @@ fn preview_body(
         ui.add_space(t.s(2));
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - t.ctrl - t.s(2)).max(100.0));
-            ui.add(Label::new(widgets::heading_text(ui, &p.title)).wrap());
+            ui.add(Label::new(widgets::content_title(ui, &p.title)).wrap());
             let mut meta = Vec::new();
             if p.is_playlist {
                 meta.push(format!("Playlist · {} video{}", p.count, if p.count == 1 { "" } else { "s" }));
@@ -1076,7 +1084,7 @@ fn results_body(ui: &mut Ui, r: &mut Results, thumbs: &mut Thumbs, download_dir:
     let mut act = ResultsAct::None;
     ui.horizontal(|ui| {
         icons::show(ui, Icon::Search, t.icon_size, t.text2);
-        ui.add(Label::new(widgets::heading_text(ui, &format!("Results for “{}”", r.query))).truncate());
+        ui.add(Label::new(widgets::content_title(ui, &format!("Results for “{}”", r.query))).truncate());
         ui.add_space(t.s(2));
         for site in SearchSite::ALL {
             if chip(ui, r.site == site, site.label(), "").clicked() && r.site != site {
@@ -1130,7 +1138,7 @@ fn file_body(
         ui.add_space(t.s(2));
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - t.ctrl - t.s(2)).max(100.0));
-            ui.add(Label::new(widgets::heading_text(ui, &f.name)).wrap());
+            ui.add(Label::new(widgets::content_title(ui, &f.name)).wrap());
             let mut meta = vec![f.size.map_or("Size unknown".to_string(), |s| util::fmt_bytes(s as f64))];
             let mime = f.mime.split(';').next().unwrap_or("").trim();
             if !mime.is_empty() {

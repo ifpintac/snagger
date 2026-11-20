@@ -27,7 +27,7 @@ enum Act {
     Forget,
 }
 
-const ROW_H: f32 = 64.0;
+const ROW_H: f32 = 60.0;
 
 impl HistoryUi {
     /// Returns a message to show as a toast.
@@ -141,16 +141,7 @@ impl HistoryUi {
 fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act> {
     let t = tk(ui);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-    let bg = rect.shrink2(vec2(t.s(1) + 2.0, 3.0));
-    let hover = ui.ctx().animate_bool_with_time(
-        resp.id.with("hover"),
-        resp.hovered(),
-        if super::theme::reduced_motion() { 0.0 } else { t.dur_fast },
-    );
-    if hover > 0.0 {
-        widgets::raised_faded(ui.painter(), bg, t.r_md, t.surface, hover, t);
-    }
-    let inner = bg.shrink2(vec2(t.s(3), t.s(1)));
+    let inner = widgets::list_row(ui, rect, &resp, false);
     let mut row = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
     let audio = h.preset.quality.is_audio();
     let tex = thumbs.get(&h.thumb);
@@ -207,7 +198,7 @@ fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act>
     if resp.double_clicked() && exists {
         act = Some(Act::Open);
     }
-    resp.context_menu(|ui| menu_items(ui, &mut act));
+    widgets::context_menu(&resp, |ui| menu_items(ui, &mut act));
     act
 }
 

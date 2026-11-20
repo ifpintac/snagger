@@ -87,9 +87,10 @@ impl SubCheck {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemePref {
-    #[default]
     System,
     Light,
+    /// The console look is a dark style, so it's the default.
+    #[default]
     Dark,
 }
 
@@ -180,7 +181,7 @@ impl Default for Settings {
             auto_update: true,
             nightly: false,
             sub_check: SubCheck::Daily,
-            theme: ThemePref::System,
+            theme: ThemePref::Dark,
             extra_args: String::new(),
         }
     }

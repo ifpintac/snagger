@@ -9,11 +9,11 @@ and the file lands in `Downloads\Snag`.
 
 ## Look
 
-Snag 2.2 uses a soft, Neumorphism-style look: one tinted surface, raised
-controls and pressed-in fields, a single ink-blue accent for the main action,
-selection and keyboard focus. Light by default; Settings → Theme has a dark
-version too. The design notes (tokens, audit, test tasks) are in
-`docs/design-neumorphism.md`, with screenshots in `docs/screens`.
+Snag 2.3 looks like a command console: one pale ice-blue line colour on
+near-black, hairline modules, clipped-corner frames and keys that light up.
+Dark by default; Settings → Theme has a light version too. The design notes
+(tokens, audit, test tasks) are in `docs/design-console.md`, with screenshots
+in `docs/screens`.
 
 ## Run it
 
@@ -148,9 +148,12 @@ The app is `target\release\Snag.exe`. `cargo test` runs the unit tests.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense), [FFmpeg](https://ffmpeg.org)
   (GPL build), [Deno](https://deno.com) (MIT): downloaded at first run, not bundled.
 - [egui / eframe](https://github.com/emilk/egui) (MIT/Apache-2.0).
-- Icons: [Iconoir](https://iconoir.com) v7.12.2 (MIT, see `assets/iconoir/LICENSE`),
-  rendered with [resvg](https://github.com/linebender/resvg) (Apache-2.0/MIT).
-- Type: [DM Sans](https://github.com/googlefonts/dm-fonts) (SIL OFL 1.1, see `assets/fonts/OFL.txt`).
+- Icons: [Phosphor](https://phosphoricons.com), Thin weight, from `@phosphor-icons/core`
+  2.1.1 (MIT, see `assets/phosphor/LICENSE`), rendered with
+  [resvg](https://github.com/linebender/resvg) (Apache-2.0/MIT).
+- Type: [Saira](https://github.com/Omnibus-Type/Saira) (SIL OFL 1.1, see
+  `assets/fonts/OFL-Saira.txt`) and [Fira Code](https://github.com/tonsky/FiraCode)
+  (SIL OFL 1.1, see `assets/fonts/OFL-FiraCode.txt`).
 - App icon: "Inbox tray" from [Microsoft Fluent Emoji](https://github.com/microsoft/fluentui-emoji)
   (MIT, see `assets/LICENSE-fluentui-emoji.txt`).
 

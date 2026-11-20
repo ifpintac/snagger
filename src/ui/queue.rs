@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use eframe::egui::{self, Align, Id, Key, Label, Layout, Rect, Sense, Ui, UiBuilder, vec2};
+use eframe::egui::{self, Align, Id, Key, Label, Layout, Sense, Ui, UiBuilder, vec2};
 
 use super::downloads::Outcome;
 use super::icons::{self, Icon};
@@ -53,7 +53,7 @@ pub struct QueueUi {
     confirm_remove: Option<(Vec<String>, usize, u64)>,
 }
 
-const ROW_H: f32 = 80.0;
+const ROW_H: f32 = 72.0;
 
 /// What the row displays, worked out once per frame.
 struct RowCtx {
@@ -464,7 +464,7 @@ impl QueueUi {
         let first_frame = *since == ctx.cumulative_frame_nr();
         let n = ids.len();
         let mut decided: Option<bool> = None;
-        let modal = egui::Modal::new(Id::new("confirm-remove")).frame(widgets::dialog_frame(ctx)).show(ctx, |ui| {
+        let modal = widgets::modal(ctx, Id::new("confirm-remove"), |ui| {
             let t = tk(ui);
             ui.set_width(400.0);
             widgets::heading(
@@ -559,28 +559,12 @@ fn job_row(ui: &mut Ui, j: &Job, thumbs: &mut Thumbs, rc: &RowCtx, selected: boo
     let t = tk(ui);
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
-    // Room for the row's own shadow inside the list's clip.
-    let bg = rect.shrink2(vec2(t.s(1) + 2.0, 3.0));
-    let hover = ui.ctx().animate_bool_with_time(
-        resp.id.with("hover"),
-        resp.hovered() && !selected,
-        if super::theme::reduced_motion() { 0.0 } else { t.dur_fast },
-    );
-    if selected {
-        widgets::inset(ui.painter(), bg, t.r_md, t.sunken, 6.0, t);
-        let bar = Rect::from_min_size(bg.min + vec2(t.s(1), t.s(4)), vec2(3.0, bg.height() - t.s(8)));
-        ui.painter().rect_filled(bar, 2, t.accent);
-    } else if hover > 0.0 {
-        widgets::raised_faded(ui.painter(), bg, t.r_md, t.surface, hover, t);
-    }
-    if widgets::focus_visible(&resp) {
-        ui.painter().rect_stroke(bg.expand(2.0), t.r_md as u8 + 2, (2.0, t.accent), egui::StrokeKind::Middle);
-    }
+    let inner = widgets::list_row(ui, rect, &resp, selected);
+    let sub = widgets::sub_color(t, selected);
     let mut act = None;
     let is_sub = !j.opts.sub_id.is_empty();
     let audio = j.opts.preset.quality.is_audio();
 
-    let inner = bg.shrink2(vec2(t.s(3), t.s(1) + 1.0));
     let mut row = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
     let tex = thumbs.get(&j.thumb);
     let placeholder = if j.opts.direct {
@@ -592,7 +576,7 @@ fn job_row(ui: &mut Ui, j: &Job, thumbs: &mut Thumbs, rc: &RowCtx, selected: boo
     } else {
         Icon::Video
     };
-    widgets::thumb(&mut row, tex.as_ref(), vec2(100.0, 56.0), placeholder);
+    widgets::thumb(&mut row, tex.as_ref(), vec2(96.0, 54.0), placeholder);
     row.add_space(t.s(3));
 
     // Buttons for this state.
@@ -640,6 +624,7 @@ fn job_row(ui: &mut Ui, j: &Job, thumbs: &mut Thumbs, rc: &RowCtx, selected: boo
     let text_w = (row.available_width() - buttons_w - t.s(3)).max(60.0);
 
     let (status_text, status_color, frac, tone, busy) = describe(j, t, rc);
+    let status_color = if status_color == t.text2 { sub } else { status_color };
     row.allocate_ui_with_layout(vec2(text_w, inner.height()), Layout::top_down(Align::Min), |ui| {
         ui.set_width(text_w);
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -657,11 +642,11 @@ fn job_row(ui: &mut Ui, j: &Job, thumbs: &mut Thumbs, rc: &RowCtx, selected: boo
             meta.push(format!("Clip {}–{end}", util::fmt_timestamp(a)));
         }
         meta.retain(|m| !m.is_empty());
-        ui.add(Label::new(widgets::caption(ui, meta.join("  ·  "))).truncate());
+        ui.add(Label::new(widgets::caption(ui, meta.join("  ·  ")).color(sub)).truncate());
         ui.add_space(2.0);
         widgets::progress(ui, text_w, frac, tone, busy);
         ui.add_space(2.0);
-        let s = ui.add(Label::new(widgets::caption(ui, &status_text).color(status_color)).truncate());
+        let s = ui.add(Label::new(widgets::mono(ui, &status_text).color(status_color)).truncate());
         if j.status == Status::Failed || j.items_failed > 0 {
             s.on_hover_text(&j.error);
         } else if j.retry_pending(rc.now) {
@@ -682,7 +667,7 @@ fn job_row(ui: &mut Ui, j: &Job, thumbs: &mut Thumbs, rc: &RowCtx, selected: boo
     if resp.double_clicked() && j.status == Status::Done {
         act = Some(Act::Open);
     }
-    resp.context_menu(|ui| row_menu(ui, j, &mut act));
+    widgets::context_menu(&resp, |ui| row_menu(ui, j, &mut act));
     (act, resp.clicked() && !resp.double_clicked())
 }
 

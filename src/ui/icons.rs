@@ -1,8 +1,11 @@
-//! Iconoir icons (v7.12.2, MIT; licence in `assets/iconoir/LICENSE`).
+//! Phosphor icons, Thin weight (@phosphor-icons/core 2.1.1, MIT; licence in
+//! `assets/phosphor/LICENSE`).
 //!
 //! The SVGs are bundled unchanged. Each one is rasterised once per pixel size
 //! with resvg, in white, and tinted when painted, so one texture serves every
-//! colour.
+//! colour. Thin strokes are half a pixel wide at 16 px, so coverage gets a
+//! gain ([`INK_GAIN`]) that keeps the lines at full colour without changing
+//! their shape: the same idea as font gamma.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -20,7 +23,7 @@ macro_rules! icons {
         impl Icon {
             fn svg(self) -> &'static [u8] {
                 match self {
-                    $(Icon::$name => include_bytes!(concat!("../../assets/iconoir/", $file, ".svg")),)*
+                    $(Icon::$name => include_bytes!(concat!("../../assets/phosphor/", $file, "-thin.svg")),)*
                 }
             }
         }
@@ -31,57 +34,57 @@ macro_rules! icons {
 }
 
 icons! {
-    Download => "download",
-    History => "clock-rotate-right",
-    Feed => "rss-feed",
-    Settings => "settings",
+    Download => "download-simple",
+    History => "clock-counter-clockwise",
+    Feed => "rss",
+    Settings => "gear",
     Link => "link",
-    Paste => "paste-clipboard",
-    AddMany => "playlist-plus",
-    Import => "import",
-    Warning => "warning-triangle",
+    Paste => "clipboard-text",
+    AddMany => "list-plus",
+    Import => "tray-arrow-down",
+    Warning => "warning",
     Alert => "warning-circle",
-    Close => "xmark",
+    Close => "x",
     Check => "check",
     Done => "check-circle",
-    Search => "search",
+    Search => "magnifying-glass",
     Eye => "eye",
     Back => "arrow-left",
     Play => "play",
     Pause => "pause",
-    Open => "open-in-window",
-    Globe => "internet",
+    Open => "arrow-square-out",
+    Globe => "globe",
     Folder => "folder",
-    Refresh => "refresh",
-    Retry => "refresh-double",
-    Terminal => "terminal",
+    Refresh => "arrow-clockwise",
+    Retry => "arrows-clockwise",
+    Terminal => "terminal-window",
     Trash => "trash",
-    Erase => "erase",
+    Erase => "eraser",
     Up => "arrow-up",
     Down => "arrow-down",
     Copy => "copy",
-    More => "more-vert",
+    More => "dots-three-vertical",
     Plus => "plus",
     Minus => "minus",
-    Video => "media-video",
-    Music => "music-double-note",
+    Video => "film-strip",
+    Music => "music-notes",
     Note => "music-note",
     Playlist => "playlist",
-    Page => "page",
-    Archive => "archive",
-    Image => "media-image",
+    Page => "file-text",
+    Archive => "file-zip",
+    Image => "image",
     Table => "table",
     Slides => "presentation",
     Package => "package",
     Cube => "cube",
-    Power => "system-shut",
+    Power => "power",
     Clock => "clock",
-    Window => "web-window",
-    Scissor => "scissor",
-    Captions => "closed-captions-tag",
+    Window => "app-window",
+    Scissor => "scissors",
+    Captions => "closed-captioning",
     Cookie => "cookie",
     Cpu => "cpu",
-    Info => "info-circle",
+    Info => "info",
     Hourglass => "hourglass",
 }
 
@@ -92,6 +95,9 @@ fn cache() -> &'static Cache {
     CACHE.get_or_init(Default::default)
 }
 
+/// How much a thin stroke's edge coverage is boosted (1.0 = none).
+const INK_GAIN: f32 = 1.6;
+
 /// White, premultiplied RGBA at `px` × `px`.
 fn rasterise(icon: Icon, px: u32) -> ColorImage {
     let svg = String::from_utf8_lossy(icon.svg()).replace("currentColor", "#FFFFFF");
@@ -100,14 +106,17 @@ fn rasterise(icon: Icon, px: u32) -> ColorImage {
         let s = px as f32 / tree.size().width();
         resvg::render(&tree, tiny_skia::Transform::from_scale(s, s), &mut pixmap.as_mut());
     }
-    ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data())
+    // White premultiplied: every channel equals the coverage.
+    let gain = if px <= 24 { INK_GAIN } else { 1.0 + (INK_GAIN - 1.0) * 24.0 / px as f32 };
+    let data: Vec<u8> = pixmap.data().iter().map(|&c| (c as f32 * gain).min(255.0) as u8).collect();
+    ColorImage::from_rgba_premultiplied([px as usize, px as usize], &data)
 }
 
 fn texture(ctx: &egui::Context, icon: Icon, px: u32) -> TextureHandle {
     let mut map = cache().lock().unwrap();
     map.entry((icon, px))
         .or_insert_with(|| {
-            ctx.load_texture(format!("iconoir-{icon:?}-{px}"), rasterise(icon, px), TextureOptions::LINEAR)
+            ctx.load_texture(format!("phosphor-{icon:?}-{px}"), rasterise(icon, px), TextureOptions::LINEAR)
         })
         .clone()
 }

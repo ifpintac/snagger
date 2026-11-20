@@ -1,9 +1,9 @@
 //! A list of videos to choose from: a playlist, a channel or search results.
 //! Click a row to tick it, Shift+click to tick a run of rows, filter by title.
 
-use eframe::egui::{self, Align, Layout, Rect, Sense, Stroke, Ui, UiBuilder, vec2};
+use eframe::egui::{self, Align, Layout, Rect, Sense, Ui, UiBuilder, Vec2, vec2};
 
-use super::icons::{self, Icon};
+use super::icons::Icon;
 use super::theme::tk;
 use super::thumbs::Thumbs;
 use super::widgets::{self, Button, icon_button, muted};
@@ -102,9 +102,10 @@ impl Picker {
                 ui.add_space(t.s(3));
                 return;
             }
+            let rh = row_height(ui);
             egui::ScrollArea::vertical().id_salt(id).max_height(max_height).auto_shrink([false, true]).show_rows(
                 ui,
-                t.row,
+                rh,
                 visible.len(),
                 |ui, range| {
                     for vi in range {
@@ -137,34 +138,27 @@ impl Picker {
     }
 }
 
+/// A result row holds two lines (title, then channel and views): their real
+/// heights in Saira plus the row padding, never less than --row.
+fn row_height(ui: &Ui) -> f32 {
+    let t = tk(ui);
+    let h = |font: egui::FontId| ui.painter().layout_no_wrap("Ag".into(), font, t.text).size().y;
+    let lines = h(egui::FontId::new(t.fs_sm, super::theme::bold())) + 1.0 + h(egui::FontId::proportional(t.fs_xs));
+    (lines + t.s(3)).ceil().max(t.row)
+}
+
 /// One row. Returns (row clicked, preview clicked).
 fn row(ui: &mut Ui, e: &Entry, on: bool, thumbs: &mut Thumbs, preview: bool) -> (bool, bool) {
     let t = tk(ui);
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), t.row), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_height(ui)), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &e.title));
-    let bg = rect.shrink(1.0);
-    if on {
-        ui.painter().rect_filled(bg, t.r_sm as u8, t.accent_soft);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(bg, t.r_sm as u8, t.surface);
-    }
-    if widgets::focus_visible(&resp) {
-        ui.painter().rect_stroke(bg, t.r_sm as u8, Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
-    }
-    let inner = rect.shrink2(vec2(t.s(2), t.s(1)));
+    let inner = widgets::list_row(ui, rect, &resp, on).expand2(vec2(t.s(1), 2.0));
     let mut r = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
 
     // Tick box, painted so the whole row toggles it.
     let (bx, _) = r.allocate_exact_size(vec2(t.s(6), t.s(6)), Sense::hover());
-    let b = Rect::from_center_size(bx.center(), vec2(18.0, 18.0));
-    let br = t.r_sm * 0.5;
-    if on {
-        r.painter().rect_filled(b, br as u8, t.accent);
-        icons::paint_at(r.painter(), Icon::Check, b.center(), 16.0, t.on_accent);
-    } else {
-        r.painter().rect_filled(b, br as u8, t.surface);
-        r.painter().rect_stroke(b, br as u8, Stroke::new(1.0, t.border_strong), egui::StrokeKind::Inside);
-    }
+    let b = Rect::from_center_size(bx.center(), Vec2::splat(t.s(4)));
+    widgets::tick_box(r.painter(), b, on, true, resp.hovered(), t);
     r.add_space(t.s(1));
     let tex = thumbs.get(&e.thumb);
     widgets::thumb(&mut r, tex.as_ref(), vec2(64.0, 36.0), Icon::Video);
@@ -175,7 +169,6 @@ fn row(ui: &mut Ui, e: &Entry, on: bool, thumbs: &mut Thumbs, preview: bool) -> 
     r.allocate_ui_with_layout(vec2(w, inner.height()), Layout::top_down(Align::Min), |ui| {
         ui.set_width(w);
         ui.spacing_mut().item_spacing.y = 1.0;
-        ui.add_space(2.0);
         ui.add(egui::Label::new(widgets::strong(ui, &e.title).size(t.fs_sm)).truncate()).on_hover_text(&e.title);
         let mut sub = Vec::new();
         if !e.uploader.is_empty() {
@@ -184,7 +177,8 @@ fn row(ui: &mut Ui, e: &Entry, on: bool, thumbs: &mut Thumbs, preview: bool) -> 
         if let Some(v) = e.views {
             sub.push(views(v));
         }
-        ui.add(egui::Label::new(widgets::caption(ui, sub.join("  ·  "))).truncate());
+        let c = widgets::sub_color(t, on);
+        ui.add(egui::Label::new(widgets::caption(ui, sub.join("  ·  ")).color(c)).truncate());
     });
     let mut wants_preview = false;
     r.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -192,7 +186,7 @@ fn row(ui: &mut Ui, e: &Entry, on: bool, thumbs: &mut Thumbs, preview: bool) -> 
             wants_preview = true;
         }
         if e.duration > 0 {
-            ui.label(muted(ui, util::fmt_duration(e.duration)));
+            ui.label(widgets::mono(ui, util::fmt_duration(e.duration)).color(widgets::sub_color(t, on)));
         }
     });
     (resp.clicked(), wants_preview)

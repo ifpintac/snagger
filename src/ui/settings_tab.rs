@@ -493,12 +493,13 @@ fn write_button_page() -> std::io::Result<std::path::PathBuf> {
     const PAGE: &str = r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Snag it: browser button</title>
 <style>
-body{font:16px/1.5 "DM Sans",system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#181B20;background:#E5E7EB}
-h1{font-weight:600;letter-spacing:-0.01em}
-a{color:#1F4FBF}
-a.btn{display:inline-block;padding:10px 22px;border-radius:999px;background:#1F4FBF;color:#FFFFFF;font-weight:600;text-decoration:none;cursor:grab;box-shadow:-3px -3px 8px #FFFFFF,3px 3px 8px #bec0c3}
-li{margin:6px 0} code{background:#D9DCE2;padding:1px 6px;border-radius:6px}
-@media (prefers-color-scheme:dark){body{background:#2A2F37;color:#E7EAEF}code{background:#22262D}a{color:#8FB0FF}a.btn{color:#FFFFFF;background:#3D6BE0;box-shadow:-3px -3px 8px #373D47,3px 3px 8px #1D2026}}
+:root{--bg:#06090E;--sunken:#0D1521;--border:#2A3539;--text:#AACFD1;--text2:#799497;--pri-bg:#AACFD1;--pri-fg:#111111;--r-btn:3px;--font-ui:"Saira",system-ui,sans-serif;--dk-mono:"Fira Code",ui-monospace,monospace}
+@media (prefers-color-scheme:light){:root{--bg:#EEF1F4;--sunken:#E4E9EE;--border:#C5CED6;--text:#163D42;--text2:#4B6266;--pri-bg:#163D42;--pri-fg:#F2F7F7}}
+body{font:13px/1.4 var(--font-ui);max-width:640px;margin:48px auto;padding:0 16px;color:var(--text);background:var(--bg)}
+h1{font-weight:500;font-size:22px;text-transform:uppercase;letter-spacing:.12em;border-top:1px solid var(--border);padding-top:12px}
+p,li{color:var(--text)} a{color:var(--text)}
+a.btn{display:inline-block;padding:6px 14px;border-radius:var(--r-btn);background:var(--pri-bg);color:var(--pri-fg);font-weight:600;text-transform:uppercase;letter-spacing:.06em;text-decoration:none;cursor:grab}
+li{margin:6px 0} code{font-family:var(--dk-mono);background:var(--sunken);padding:1px 6px;border-radius:2px}
 </style></head><body>
 <h1>Snag it</h1>
 <p>Drag this button to your bookmarks bar:</p>
@@ -545,8 +546,9 @@ fn about_section(ui: &mut Ui) {
                 ("ffmpeg", "https://github.com/yt-dlp/FFmpeg-Builds"),
                 ("Deno", "https://deno.com"),
                 ("egui", "https://github.com/emilk/egui"),
-                ("Iconoir icons", "https://iconoir.com"),
-                ("DM Sans", "https://github.com/googlefonts/dm-fonts"),
+                ("Phosphor icons", "https://phosphoricons.com"),
+                ("Saira", "https://github.com/Omnibus-Type/Saira"),
+                ("Fira Code", "https://github.com/tonsky/FiraCode"),
                 ("Fluent Emoji (app icon)", "https://github.com/microsoft/fluentui-emoji"),
             ] {
                 ui.hyperlink_to(name, url);

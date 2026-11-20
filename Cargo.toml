@@ -1,6 +1,6 @@
 [package]
 name = "snag"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2024"
 description = "A private video and audio downloader for your desktop"
 license = "MIT"
