@@ -59,6 +59,15 @@ pub enum SubsMode {
     Files,
 }
 
+/// The copy-and-download shortcut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Hotkey {
+    Off,
+    #[default]
+    CtrlAltD,
+    CtrlShiftD,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ClipMode {
     Off,
@@ -108,6 +117,13 @@ pub struct Settings {
     pub speed_limit_kb: u32,
     pub keep_awake: bool,
     pub notify_done: bool,
+    /// Closing the window keeps Snagger running in the tray.
+    pub tray: bool,
+    /// Start (in the tray) when you sign in to Windows.
+    pub start_with_windows: bool,
+    pub hotkey: Hotkey,
+    /// "Still running in the tray" was explained once.
+    pub tray_hint_shown: bool,
 
     pub subtitles: SubsMode,
     /// Save a .txt transcript (from the captions) next to each video.
@@ -161,6 +177,10 @@ impl Default for Settings {
             speed_limit_kb: 0,
             keep_awake: true,
             notify_done: true,
+            tray: true,
+            start_with_windows: false,
+            hotkey: Hotkey::CtrlAltD,
+            tray_hint_shown: false,
             subtitles: SubsMode::Off,
             transcripts: true,
             sub_langs: "en.*,en".into(),

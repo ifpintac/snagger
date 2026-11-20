@@ -260,11 +260,49 @@ mod imp {
         }
         unsafe {
             let hwnd = HWND(h as _);
+            if !windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, windows::Win32::UI::WindowsAndMessaging::SW_SHOW);
+            }
             if IsIconic(hwnd).as_bool() {
                 let _ = ShowWindow(hwnd, SW_RESTORE);
             }
             let _ = SetForegroundWindow(hwnd);
         }
+    }
+
+    /// Hides the window (Snagger keeps running in the tray).
+    pub fn hide_main_window() {
+        let h = main_window();
+        if h != 0 {
+            unsafe {
+                let _ = ShowWindow(HWND(h as _), windows::Win32::UI::WindowsAndMessaging::SW_HIDE);
+            }
+        }
+    }
+
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const RUN_NAME: &str = "Snagger";
+
+    /// Starts Snagger (in the tray) when you sign in to Windows, or stops it.
+    pub fn set_run_at_startup(on: bool, exe: &Path) -> Result<(), String> {
+        if on {
+            reg_set(RUN_KEY, Some(RUN_NAME), &format!("\"{}\" --background", exe.display()))
+        } else {
+            use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteKeyValueW};
+            let key = wide(OsStr::new(RUN_KEY));
+            let name = wide(OsStr::new(RUN_NAME));
+            unsafe {
+                let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr()), PCWSTR(name.as_ptr()));
+            }
+            Ok(())
+        }
+    }
+
+    /// Registers Snagger's name and icon for Windows notifications (per user).
+    pub fn register_notifications(aumid: &str, icon: &Path) -> Result<(), String> {
+        let key = format!(r"Software\Classes\AppUserModelId\{aumid}");
+        reg_set(&key, Some("DisplayName"), "Snagger")?;
+        reg_set(&key, Some("IconUri"), &icon.display().to_string())
     }
 
     /// Flashes the taskbar button (until the window is focused) and plays the
@@ -405,6 +443,13 @@ mod imp {
     }
     pub fn allow_foreground(_pid: u32) {}
     pub fn bring_to_front() {}
+    pub fn hide_main_window() {}
+    pub fn set_run_at_startup(_on: bool, _exe: &Path) -> Result<(), String> {
+        Err("Only on Windows".into())
+    }
+    pub fn register_notifications(_aumid: &str, _icon: &Path) -> Result<(), String> {
+        Err("Only on Windows".into())
+    }
     pub fn notify_attention(_sound: bool) {}
 
     #[derive(Clone, Copy, PartialEq)]

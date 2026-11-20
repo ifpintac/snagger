@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod background;
 mod clipwatch;
 mod direct;
 mod engine;
@@ -75,12 +76,15 @@ fn main() -> eframe::Result {
     settings::migrate_from_snag();
     relink_browser_button();
     let links = links_from_args();
+    // Started with Windows: run in the tray without showing the window.
+    let start_hidden = std::env::args().any(|a| a == "--background");
     // Already open? Hand the links over and bring that window forward.
     if ipc::forward_to_running(&links) {
         return Ok(());
     }
 
     let hub = hub::Hub::load();
+    background::register_notifications();
     ipc::listen(&hub);
     engine::start(&hub);
     manager::start(&hub);
@@ -98,5 +102,9 @@ fn main() -> eframe::Result {
         persist_window: true,
         ..Default::default()
     };
-    eframe::run_native("Snagger", options, Box::new(move |cc| Ok(Box::new(ui::SnagApp::new(cc, hub, links)))))
+    eframe::run_native(
+        "Snagger",
+        options,
+        Box::new(move |cc| Ok(Box::new(ui::SnagApp::new(cc, hub, links, start_hidden)))),
+    )
 }

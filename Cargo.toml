@@ -27,7 +27,12 @@ sha2 = "0.10"
 raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
+tray-icon = "0.26"
+global-hotkey = "0.10"
 windows = { version = "0.62", features = [
+    "Data_Xml_Dom",
+    "Foundation",
+    "UI_Notifications",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",

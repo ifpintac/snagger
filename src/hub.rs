@@ -78,6 +78,8 @@ pub struct Core {
     pub disk_hold: bool,
     /// After-download tools at work (make smaller, GIF, split).
     pub tasks: Vec<crate::tools::Task>,
+    /// Why the copy-and-download shortcut couldn't be set, for Settings.
+    pub hotkey_error: String,
 }
 
 impl Core {
@@ -101,6 +103,7 @@ impl Core {
             disk_free: None,
             disk_hold: false,
             tasks: Vec::new(),
+            hotkey_error: String::new(),
         }
     }
 

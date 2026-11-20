@@ -65,10 +65,16 @@ pub struct SnagApp {
     allow_close: bool,
     free_space: Option<u64>,
     last_slow_tick: f64,
+    #[cfg(windows)]
+    background: crate::background::Background,
+    /// The tray and shortcut as last applied, to follow Settings.
+    applied: Option<(bool, crate::settings::Hotkey)>,
+    /// Started with Windows: hide the window once it exists.
+    start_hidden: bool,
 }
 
 impl SnagApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, hub: Hub, links: Vec<String>) -> SnagApp {
+    pub fn new(cc: &eframe::CreationContext<'_>, hub: Hub, links: Vec<String>, start_hidden: bool) -> SnagApp {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         if let Ok(h) = cc.window_handle()
             && let RawWindowHandle::Win32(w) = h.as_raw()
@@ -79,7 +85,13 @@ impl SnagApp {
         hub.set_ctx(ctx.clone());
         theme::install_fonts(ctx);
         hub.lock().inbox.extend(links);
+        #[cfg(windows)]
+        let background = crate::background::Background::start(&hub, ctx);
         SnagApp {
+            #[cfg(windows)]
+            background,
+            applied: None,
+            start_hidden,
             thumbs: Thumbs::new(ctx),
             hub,
             tab: Tab::Downloads,
@@ -206,6 +218,7 @@ impl eframe::App for SnagApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         widgets::track_input_mode(&ctx);
+        self.follow_background_settings();
         self.handle_close(&ctx);
         self.global_paste(&ctx);
         let t = tk(ui);
@@ -570,8 +583,56 @@ impl SnagApp {
         }
     }
 
+    /// Keeps the tray icon and the shortcut in step with Settings, and hides
+    /// the window on the first frame when Windows started Snagger.
+    fn follow_background_settings(&mut self) {
+        if std::mem::take(&mut self.start_hidden) {
+            platform::hide_main_window();
+        }
+        let wanted = {
+            let c = self.hub.lock();
+            (c.settings.tray, c.settings.hotkey)
+        };
+        if self.applied != Some(wanted) {
+            #[cfg(windows)]
+            {
+                self.background.apply(wanted.0, wanted.1);
+                self.hub.lock().hotkey_error = self.background.hotkey_error.clone();
+            }
+            self.applied = Some(wanted);
+        }
+    }
+
+    /// With the tray on, closing the window hides it and downloads carry on.
+    fn close_to_tray(&mut self) -> bool {
+        #[cfg(windows)]
+        {
+            if crate::background::quitting() || !self.background.has_tray() {
+                return false;
+            }
+            platform::hide_main_window();
+            let mut c = self.hub.lock();
+            if !c.settings.tray_hint_shown {
+                c.settings.tray_hint_shown = true;
+                c.dirty.settings = true;
+                drop(c);
+                crate::background::notify(
+                    "Snagger is still running",
+                    "Downloads carry on. Click the tray icon to open Snagger, or right-click it to quit.",
+                );
+            }
+            true
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
     fn handle_close(&mut self, ctx: &egui::Context) {
         if !ctx.input(|i| i.viewport().close_requested()) || self.allow_close {
+            return;
+        }
+        if self.close_to_tray() {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             return;
         }
         let running = self.hub.lock().jobs.iter().filter(|j| j.status == Status::Running).count();

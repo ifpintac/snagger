@@ -10,7 +10,7 @@ use super::widgets::{self, Button, checkbox, muted, section, segmented, setting_
 use crate::engine::{self, Part};
 use crate::hub::Hub;
 use crate::platform;
-use crate::settings::{self, BROWSERS, ClipMode, NameStyle, Organize, Settings, SubsMode, ThemePref};
+use crate::settings::{self, BROWSERS, ClipMode, Hotkey, NameStyle, Organize, Settings, SubsMode, ThemePref};
 use crate::util;
 
 pub fn show(ui: &mut Ui, hub: &Hub, confirm: &mut Option<Confirm>) {
@@ -34,6 +34,13 @@ pub fn show(ui: &mut Ui, hub: &Hub, confirm: &mut Option<Confirm>) {
         });
     });
 
+    if s.start_with_windows != before.start_with_windows
+        && let Ok(exe) = std::env::current_exe()
+        && let Err(e) = platform::set_run_at_startup(s.start_with_windows, &exe)
+    {
+        hub.lock().toast(format!("Couldn't change starting with Windows: {e}"));
+        s.start_with_windows = before.start_with_windows;
+    }
     if s != before {
         let mut c = hub.lock();
         c.settings = s.sanitized();
@@ -55,7 +62,8 @@ fn sections(
     quality_section(ui, s);
     extras_section(ui, s);
     signin_section(ui, s);
-    behaviour_section(ui, s, confirm);
+    let hotkey_error = hub.lock().hotkey_error.clone();
+    behaviour_section(ui, s, confirm, &hotkey_error);
     browser_section(ui, hub);
     engine_section(ui, hub, s, engine_state, running);
     advanced_section(ui, s);
@@ -287,7 +295,7 @@ fn signin_section(ui: &mut Ui, s: &mut Settings) {
     });
 }
 
-fn behaviour_section(ui: &mut Ui, s: &mut Settings, confirm: &mut Option<Confirm>) {
+fn behaviour_section(ui: &mut Ui, s: &mut Settings, confirm: &mut Option<Confirm>, hotkey_error: &str) {
     section(ui, Icon::Settings, "Behaviour", |ui| {
         setting_row(
             ui,
@@ -309,7 +317,7 @@ fn behaviour_section(ui: &mut Ui, s: &mut Settings, confirm: &mut Option<Confirm
             ui.vertical(|ui| {
                 checkbox(ui, &mut s.resume_on_start, "Continue unfinished downloads when Snagger opens");
                 checkbox(ui, &mut s.keep_awake, "Keep the PC awake while downloading");
-                checkbox(ui, &mut s.notify_done, "Flash the taskbar and chime when a batch finishes");
+                checkbox(ui, &mut s.notify_done, "Show a Windows notification when a batch finishes");
                 checkbox(
                     ui,
                     &mut s.auto_retry,
@@ -336,6 +344,32 @@ fn behaviour_section(ui: &mut Ui, s: &mut Settings, confirm: &mut Option<Confirm
                 }
             });
         }
+        setting_row(
+            ui,
+            "In the background",
+            "Closing the window hides Snagger in the tray (by the clock) and downloads carry on. Right-click the tray icon to quit.",
+            |ui| {
+                ui.vertical(|ui| {
+                    checkbox(ui, &mut s.tray, "Keep running in the tray when the window is closed");
+                    checkbox(ui, &mut s.start_with_windows, "Start in the tray when I sign in to Windows");
+                });
+            },
+        );
+        setting_row(
+            ui,
+            "Download shortcut",
+            "Copy a link anywhere, press the shortcut, and Snagger downloads it with your default quality, even while its window is closed.",
+            |ui| {
+                segmented(
+                    ui,
+                    &mut s.hotkey,
+                    &[(Hotkey::Off, "Off"), (Hotkey::CtrlAltD, "Ctrl+Alt+D"), (Hotkey::CtrlShiftD, "Ctrl+Shift+D")],
+                );
+                if !hotkey_error.is_empty() {
+                    ui.label(widgets::colored(ui, hotkey_error, tk(ui).warning_text));
+                }
+            },
+        );
         setting_row(ui, "Theme", "", |ui| {
             segmented(
                 ui,

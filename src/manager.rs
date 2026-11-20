@@ -64,7 +64,7 @@ impl Manager {
         let saves;
         let bar;
         let keep_awake;
-        let mut notify = false;
+        let mut notify: Option<String> = None;
         let mut open_folder = None;
         let mut power = None;
         {
@@ -128,7 +128,18 @@ impl Manager {
             }
             let batch_over = self.was_active && active.is_empty();
             if batch_over && c.settings.notify_done {
-                notify = c.jobs.iter().any(|j| j.status == Status::Done && j.finished >= self.batch_started);
+                let done: Vec<&crate::model::Job> =
+                    c.jobs.iter().filter(|j| j.status == Status::Done && j.finished >= self.batch_started).collect();
+                let failed =
+                    c.jobs.iter().filter(|j| j.status == Status::Failed && j.finished >= self.batch_started).count();
+                if !done.is_empty() {
+                    let body = match (done.len(), failed) {
+                        (1, 0) => format!("“{}” finished.", util::ellipsize(&done[0].display_title(), 80)),
+                        (n, 0) => format!("{n} downloads finished."),
+                        (n, f) => format!("{n} finished, {f} failed."),
+                    };
+                    notify = Some(body);
+                }
             }
             self.was_active = !active.is_empty();
             if batch_over && !c.queue_paused {
@@ -172,7 +183,9 @@ impl Manager {
             self.awake = keep_awake;
         }
         self.taskbar.set(bar);
-        if notify {
+        if let Some(body) = notify
+            && !crate::background::notify("Downloads finished", &body)
+        {
             platform::notify_attention(true);
         }
         if let Some(dir) = open_folder {
