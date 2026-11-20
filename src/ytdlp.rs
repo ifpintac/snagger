@@ -302,6 +302,9 @@ pub fn download_args(job: &Job, s: &Settings, p: &EnginePaths, staging: &Path, a
     if s.embed_metadata && has_ffmpeg {
         push(&mut a, &["--embed-metadata", "--embed-chapters"]);
     }
+    if s.write_description {
+        a.push("--write-description".into());
+    }
     if s.write_thumbnail {
         push(&mut a, &["--write-thumbnail", "--convert-thumbnails", "jpg"]);
     }

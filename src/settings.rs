@@ -116,6 +116,8 @@ pub struct Settings {
     pub auto_subs: bool,
     pub embed_thumbnail: bool,
     pub write_thumbnail: bool,
+    /// Save the video's description (links, chapter list) as a .txt.
+    pub write_description: bool,
     pub embed_metadata: bool,
     pub sponsorblock: bool,
 
@@ -165,6 +167,7 @@ impl Default for Settings {
             auto_subs: false,
             embed_thumbnail: true,
             write_thumbnail: false,
+            write_description: true,
             embed_metadata: true,
             sponsorblock: false,
             cookies_browser: String::new(),

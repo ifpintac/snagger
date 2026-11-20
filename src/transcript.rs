@@ -82,6 +82,38 @@ pub fn get_in_background(hub: &crate::hub::Hub, url: String, title: String, medi
     });
 }
 
+/// Where `query` (lowercase) is said in a saved transcript: the paragraph's
+/// time and a short excerpt around the words.
+pub fn search(text: &str, query: &str) -> Option<(String, String)> {
+    if query.is_empty() {
+        return None;
+    }
+    for line in text.lines() {
+        let Some(rest) = line.strip_prefix('[') else { continue };
+        let Some((stamp, para)) = rest.split_once("] ") else { continue };
+        let lower = para.to_lowercase();
+        let Some(at) = lower.find(query) else { continue };
+        // Lowercasing can change byte lengths; map back by characters.
+        let start_char = lower[..at].chars().count();
+        let len_chars = query.chars().count();
+        let chars: Vec<char> = para.chars().collect();
+        let from = start_char.saturating_sub(40);
+        let to = (start_char + len_chars + 50).min(chars.len());
+        let mut snippet: String = chars[from..to].iter().collect();
+        // Whole words only at the cut ends.
+        if from > 0 {
+            let words = snippet.split_once(' ').map_or(snippet.as_str(), |(_, rest)| rest);
+            snippet = format!("…{}", words.trim_start());
+        }
+        if to < chars.len() {
+            let words = snippet.rsplit_once(' ').map_or(snippet.as_str(), |(head, _)| head);
+            snippet = format!("{}…", words.trim_end());
+        }
+        return Some((stamp.to_string(), snippet));
+    }
+    None
+}
+
 /// Fetches the captions and writes the transcript. Ok(None) when the video
 /// has no captions in any language Snagger asked for.
 pub fn from_captions(
@@ -419,6 +451,18 @@ mod tests {
         ];
         let got = clip(cues, 60.0, 90.0);
         assert_eq!(got, [Cue { start: 1.0, text: "b".into() }]);
+    }
+
+    #[test]
+    fn finds_what_was_said() {
+        let text = "Tears of Steel\r\nhttps://x\r\nFrom the site's captions (en).\r\n\r\n[00:23] You're a jerk, Thom.\r\n\r\n[00:30] Why don't you just admit that you're freaked out by my robot hand?\r\n";
+        let (stamp, snippet) = search(text, "robot hand").unwrap();
+        assert_eq!(stamp, "00:30");
+        assert!(snippet.contains("freaked out by my robot hand?"), "{snippet}");
+        assert_eq!(snippet, "…admit that you're freaked out by my robot hand?", "cut at whole words");
+        assert!(search(text, "spaceship").is_none());
+        // The title line isn't a paragraph.
+        assert!(search(text, "tears").is_none());
     }
 
     #[test]

@@ -222,6 +222,11 @@ fn extras_section(ui: &mut Ui, s: &mut Settings) {
             ui.vertical(|ui| {
                 checkbox(ui, &mut s.embed_thumbnail, "Add the thumbnail as cover art (MP4, MKV, MP3, M4A, Opus, FLAC)");
                 checkbox(ui, &mut s.write_thumbnail, "Also save the thumbnail as a .jpg next to the file");
+                checkbox(
+                    ui,
+                    &mut s.write_description,
+                    "Save the video's description (links, chapter list) as a .txt next to the file",
+                );
                 checkbox(ui, &mut s.embed_metadata, "Write title, artist, date and chapters into the file");
                 checkbox(
                     ui,

@@ -1,5 +1,7 @@
 //! The History tab: everything Snagger has saved, searchable.
 
+use std::collections::HashMap;
+
 use eframe::egui::{self, Align, Label, Layout, Sense, Ui, UiBuilder, vec2};
 
 use super::Confirm;
@@ -15,6 +17,12 @@ use crate::util;
 #[derive(Default)]
 pub struct HistoryUi {
     query: String,
+    /// Saved transcripts, read once per search (cleared when the box is empty).
+    transcripts: HashMap<String, String>,
+    /// For the current search: rows found only by what was said, with the
+    /// time and an excerpt.
+    said: HashMap<String, (String, String)>,
+    said_for: String,
 }
 
 #[derive(Clone, Copy)]
@@ -52,24 +60,47 @@ impl HistoryUi {
                     {
                         *confirm = Some(Confirm::ClearHistory);
                     }
-                    let edit = egui::TextEdit::singleline(&mut self.query).hint_text("Search titles, channels, sites");
+                    let edit = egui::TextEdit::singleline(&mut self.query)
+                        .hint_text("Search titles, channels and what was said");
                     widgets::input(ui, edit, Some(Icon::Search), 300.0);
                 });
             });
             ui.add_space(t.s(4));
 
             let q = self.query.trim().to_lowercase();
-            let rows: Vec<&HistoryItem> = c
-                .history
-                .iter()
-                .filter(|h| {
-                    q.is_empty()
-                        || h.title.to_lowercase().contains(&q)
-                        || h.uploader.to_lowercase().contains(&q)
-                        || h.site.to_lowercase().contains(&q)
-                        || h.url.to_lowercase().contains(&q)
-                })
-                .collect();
+            let by_details = |h: &HistoryItem| {
+                h.title.to_lowercase().contains(&q)
+                    || h.uploader.to_lowercase().contains(&q)
+                    || h.site.to_lowercase().contains(&q)
+                    || h.url.to_lowercase().contains(&q)
+            };
+            if q.chars().count() < 3 {
+                // Short searches stay on titles; an empty box forgets the cache
+                // so new transcripts are found next time.
+                if q.is_empty() {
+                    self.transcripts.clear();
+                }
+                self.said.clear();
+                self.said_for.clear();
+            } else if q != self.said_for {
+                self.said.clear();
+                for h in c.history.iter().filter(|h| !by_details(h)) {
+                    let text = self.transcripts.entry(h.id.clone()).or_insert_with(|| {
+                        h.files
+                            .iter()
+                            .filter_map(|f| crate::transcript::existing(f))
+                            .filter_map(|p| std::fs::read_to_string(p).ok())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    });
+                    if let Some(hit) = crate::transcript::search(text, &q) {
+                        self.said.insert(h.id.clone(), hit);
+                    }
+                }
+                self.said_for = q.clone();
+            }
+            let rows: Vec<&HistoryItem> =
+                c.history.iter().filter(|h| q.is_empty() || by_details(h) || self.said.contains_key(&h.id)).collect();
             if rows.is_empty() {
                 ui.add_space(t.s(10));
                 ui.vertical_centered(|ui| {
@@ -87,7 +118,7 @@ impl HistoryUi {
                     rows.len(),
                     |ui, range| {
                         for i in range {
-                            if let Some(a) = history_row(ui, rows[i], thumbs) {
+                            if let Some(a) = history_row(ui, rows[i], thumbs, self.said.get(&rows[i].id)) {
                                 acts.push((rows[i].id.clone(), a));
                             }
                         }
@@ -165,7 +196,7 @@ impl HistoryUi {
     }
 }
 
-fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act> {
+fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs, said: Option<&(String, String)>) -> Option<Act> {
     let t = tk(ui);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     let inner = widgets::list_row(ui, rect, &resp, false);
@@ -205,7 +236,16 @@ fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act>
             meta.push("file moved or deleted".into());
         }
         meta.retain(|m| !m.is_empty());
-        ui.add(Label::new(widgets::caption(ui, meta.join("  ·  "))).truncate());
+        match said {
+            // Found by what was said: show where.
+            Some((stamp, snippet)) => {
+                let line = format!("At {stamp}  ·  “{snippet}”");
+                ui.add(Label::new(widgets::caption(ui, &line).color(t.text)).truncate()).on_hover_text(&line);
+            }
+            None => {
+                ui.add(Label::new(widgets::caption(ui, meta.join("  ·  "))).truncate());
+            }
+        }
     });
     row.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = t.s(1);

@@ -434,6 +434,10 @@ fn move_out(out: &Path, dest: &Path, media: Option<&Path>, flatten: bool) -> Mov
     for file in files {
         let Ok(rel) = file.strip_prefix(out) else { continue };
         let mut rel = rel.to_path_buf();
+        // yt-dlp names descriptions "….description"; a .txt opens with a double-click.
+        if rel.extension().is_some_and(|e| e.eq_ignore_ascii_case("description")) {
+            rel.set_extension("description.txt");
+        }
         if flatten
             && let Some(name) = rel.file_name().map(|n| n.to_string_lossy().into_owned())
             && let Some(stripped) = strip_number_prefix(&name)

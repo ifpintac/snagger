@@ -365,7 +365,7 @@ impl DownloadsUi {
         ui.horizontal(|ui| {
             let w = (ui.available_width() - 372.0).max(220.0);
             let edit = egui::TextEdit::singleline(&mut self.link)
-                .hint_text(format!("Paste a link, or type to search {}", self.site.label()));
+                .hint_text(format!("Paste a link from any video site, or type to search {}", self.site.label()));
             let resp = widgets::input(ui, edit, Some(Icon::Link), w);
             if std::mem::take(&mut self.focus_link) {
                 resp.request_focus();

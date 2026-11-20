@@ -43,6 +43,7 @@ enum Act {
     UpdateRetry,
     Transcript,
     OpenTranscript,
+    ChangeQuality,
 }
 
 #[derive(Default)]
@@ -53,6 +54,9 @@ pub struct QueueUi {
     /// Rows waiting for "Remove N downloads?" to be answered, and the frame
     /// the question first showed.
     confirm_remove: Option<(Vec<String>, usize, u64)>,
+    /// "Change quality" for one row: its id, the choice so far, and whether
+    /// a part was already downloaded in the old quality.
+    quality_edit: Option<(String, crate::model::Preset, bool)>,
 }
 
 const ROW_H: f32 = 72.0;
@@ -412,6 +416,9 @@ impl QueueUi {
         if let Some(msg) = self.confirm_dialog(ui.ctx(), hub) {
             outcome = Some(Outcome::Toast(msg));
         }
+        if let Some(msg) = self.quality_dialog(ui.ctx(), hub) {
+            outcome = Some(Outcome::Toast(msg));
+        }
 
         for (id, act) in acts {
             let mut c = hub.lock();
@@ -424,6 +431,13 @@ impl QueueUi {
                 Act::Top => c.move_to_top(&id),
                 Act::Bottom => c.move_to_bottom(&id),
                 Act::Log => outcome = Some(Outcome::ShowLog(id.clone())),
+                Act::ChangeQuality => {
+                    if let Some(j) = c.job(&id) {
+                        // Only a part on disk makes it start over.
+                        let partial = j.progress > 0.0 || j.staging.as_ref().is_some_and(|s| s.exists());
+                        self.quality_edit = Some((id.clone(), j.opts.preset, partial));
+                    }
+                }
                 Act::Transcript => {
                     if let Some(j) = c.job(&id)
                         && let Some(media) = j.files.first()
@@ -477,6 +491,57 @@ impl QueueUi {
         }
         hub.wake();
         outcome
+    }
+
+    /// "Change quality" for a download that hasn't finished. Returns a toast.
+    fn quality_dialog(&mut self, ctx: &egui::Context, hub: &Hub) -> Option<String> {
+        let (id, preset, partial) = self.quality_edit.as_mut()?;
+        let mut decided: Option<bool> = None;
+        let title = hub.lock().job(id).map(|j| j.display_title()).unwrap_or_default();
+        let modal = widgets::modal(ctx, Id::new("change-quality"), |ui| {
+            let t = tk(ui);
+            ui.set_width(460.0);
+            widgets::heading(ui, "Change quality");
+            ui.add_space(t.s(1));
+            ui.add(Label::new(widgets::muted(ui, &title)).truncate());
+            ui.add_space(t.s(4));
+            super::downloads::preset_picker(ui, "change-quality", preset);
+            if *partial {
+                ui.add_space(t.s(3));
+                widgets::hint(ui, "The part downloaded so far is in the old quality, so this download starts over.");
+            }
+            ui.add_space(t.s(6));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if Button::primary("Use this quality").show(ui).clicked() {
+                    decided = Some(true);
+                }
+                if widgets::button(ui, "Cancel").clicked() {
+                    decided = Some(false);
+                }
+            });
+        });
+        if modal.should_close() && decided.is_none() {
+            decided = Some(false);
+        }
+        let yes = decided?;
+        let (id, preset, _) = self.quality_edit.take()?;
+        if !yes {
+            return None;
+        }
+        let mut c = hub.lock();
+        let j = c.job_mut(&id)?;
+        if j.opts.preset == preset {
+            return None;
+        }
+        j.opts.preset = preset;
+        if j.progress > 0.0 || j.staging.is_some() {
+            // Parts in the old quality can't be resumed in the new one.
+            crate::hub::discard_job_files(j);
+            j.staging = None;
+            j.progress = 0.0;
+        }
+        c.dirty.queue = true;
+        Some(format!("Changed to {}", preset.label()))
     }
 
     /// "Remove N downloads?" Returns a toast once removed.
@@ -704,6 +769,13 @@ fn row_menu(ui: &mut Ui, j: &Job, act: &mut Option<Act>) {
     }
     if j.status.is_finished() {
         item(ui, Icon::Refresh, "Download again", Act::Redo);
+    }
+    // Not started, paused or failed: the quality can still change.
+    if matches!(j.status, Status::Queued | Status::Paused | Status::Failed)
+        && !j.opts.direct
+        && j.opts.sub_id.is_empty()
+    {
+        item(ui, Icon::Video, "Change quality…", Act::ChangeQuality);
     }
     // One video, downloaded by yt-dlp: it has a page to read captions from.
     if j.status == Status::Done && j.files.len() == 1 && !j.opts.direct {
