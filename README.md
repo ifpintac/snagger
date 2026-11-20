@@ -7,6 +7,8 @@ Paste a link from YouTube, TikTok, Instagram, X, Reddit, Facebook, Vimeo,
 Twitch, SoundCloud or any of the 1,800+ sites yt-dlp supports, pick a quality,
 and the file lands in `Downloads\Snagger`.
 
+![Snagger's queue with a finished download's menu open](docs/screens/16-get-transcript.jpg)
+
 ## Look
 
 Snagger 2.6 looks like a command console: one pale ice-blue line colour on
@@ -17,7 +19,8 @@ in `docs/screens`.
 
 ## Run it
 
-Double-click **Snagger.exe**. The first launch fetches the download engine
+Snagger runs on Windows 10 and 11. Build it (see [Build](#build)), then
+double-click **Snagger.exe**. The first launch fetches the download engine
 (about 110 MB, from the projects' own GitHub releases) and then you're ready.
 
 ## What it does
@@ -191,3 +194,8 @@ The app is `target\release\Snagger.exe`. `cargo test` runs the unit tests.
 
 Only download videos you have the right to keep: your own uploads, Creative
 Commons work, or videos the creator allows you to save.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The fonts, icons and app icon keep their own
+licences (listed under Credits).
