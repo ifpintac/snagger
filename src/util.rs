@@ -534,6 +534,9 @@ pub fn friendly_error(err: &str, browser: &str) -> String {
     if low.contains("http error 404") {
         return "That page doesn't exist (404). Check the link and try again.".into();
     }
+    if low.contains("http error 403") || low.contains("http 403") {
+        return REFUSED.into();
+    }
     if low.contains("ffmpeg") && (low.contains("not found") || low.contains("not installed")) {
         return "This download needs ffmpeg. Open Settings → Engine and reinstall ffmpeg.".into();
     }
@@ -543,8 +546,8 @@ pub fn friendly_error(err: &str, browser: &str) -> String {
     if low.contains("requested format is not available") {
         return "That quality or format isn't available for this video. Pick another and try again.".into();
     }
-    if low.contains("no space left") || low.contains("disk full") {
-        return "The disk is full. Free up space or choose another download folder.".into();
+    if low.contains("no space left") || low.contains("disk full") || low.contains("errno 28") {
+        return "The disk is full. Free up space, then resume (the part downloaded so far is kept).".into();
     }
     if low.contains("drm") {
         return "This video is DRM-protected, so it can't be downloaded.".into();
@@ -572,6 +575,54 @@ pub fn friendly_error(err: &str, browser: &str) -> String {
         };
     }
     if msg.is_empty() { "Something went wrong while downloading.".into() } else { ellipsize(&msg, 400) }
+}
+
+/// The site refused the download even after fresh links. Mentions "HTTP 403"
+/// so [`refused`] and [`engine_problem`] still recognise it.
+pub const REFUSED: &str = "The site refused the download (HTTP 403), even with fresh links. Update yt-dlp (the refresh button on this row does it and tries again), or pick your browser under Settings → Sign-in.";
+
+/// The site said "403 Forbidden". With YouTube that is usually one stream
+/// link going bad, and fresh links (a new run) fix it.
+pub fn refused(error: &str) -> bool {
+    let low = error.to_lowercase();
+    low.contains("http error 403") || low.contains("http 403") || low.contains("403 forbidden")
+}
+
+/// How long to wait before fetching fresh links after a refusal, or None
+/// once that has been tried twice.
+pub fn refusal_delay(refusals_so_far: u32) -> Option<u64> {
+    [5, 30].get(refusals_so_far as usize).copied()
+}
+
+/// The disk filled up, or would have.
+pub fn disk_full(error: &str) -> bool {
+    let low = error.to_lowercase();
+    low.contains("disk is full") || low.contains("not enough disk space")
+}
+
+/// Bytes a download needs on disk: the file, plus as much again when video
+/// and audio are joined afterwards (both parts sit on disk while the joined
+/// file is written), plus a little room.
+pub fn space_needed(size: u64, joins: bool) -> u64 {
+    size.saturating_mul(if joins { 2 } else { 1 }) + 64 * 1024 * 1024
+}
+
+/// "C:" for a path on drive C, or "the download drive".
+pub fn drive_name(path: &Path) -> String {
+    match path.components().next() {
+        Some(std::path::Component::Prefix(p)) => p.as_os_str().to_string_lossy().trim_end_matches('\\').to_string(),
+        _ => "the download drive".into(),
+    }
+}
+
+/// The message for a download that won't fit.
+pub fn not_enough_space(needed: u64, free: u64, dir: &Path) -> String {
+    format!(
+        "Not enough disk space: this needs about {} and {} has {} free. Free up space, then resume.",
+        fmt_bytes(needed as f64),
+        drive_name(dir),
+        fmt_bytes(free as f64)
+    )
 }
 
 pub fn capitalize(s: &str) -> String {
@@ -630,6 +681,8 @@ pub fn engine_problem(error: &str) -> bool {
         "jsinterp",
         "challenge",
         "failed to parse json",
+        // A refusal that fresh links didn't fix: a newer yt-dlp usually does.
+        "http 403",
     ]
     .iter()
     .any(|p| low.contains(p))
@@ -785,5 +838,32 @@ mod tests {
             playlist_url_of("https://www.youtube.com/watch?v=a&list=PL1&index=2").as_deref(),
             Some("https://www.youtube.com/playlist?list=PL1")
         );
+    }
+
+    #[test]
+    fn refusals_get_fresh_links_then_a_plain_message() {
+        let raw = "ERROR: unable to download video data: HTTP Error 403: Forbidden";
+        assert!(refused(raw));
+        let msg = friendly_error(raw, "");
+        assert_eq!(msg, REFUSED);
+        assert!(refused(&msg), "the friendly text must still read as a refusal");
+        assert!(engine_problem(&msg), "a lasting refusal offers the update-and-retry button");
+        assert_eq!(refusal_delay(0), Some(5));
+        assert_eq!(refusal_delay(1), Some(30));
+        assert_eq!(refusal_delay(2), None);
+        assert!(!refused("HTTP Error 404: Not Found"));
+    }
+
+    #[test]
+    fn disk_space_messages() {
+        let mb = 1024 * 1024;
+        assert_eq!(space_needed(100 * mb, false), 164 * mb);
+        assert_eq!(space_needed(100 * mb, true), 264 * mb);
+        assert_eq!(drive_name(Path::new(r"C:\Users\me\Downloads")), "C:");
+        let msg = not_enough_space(264 * mb, 100 * mb, Path::new(r"D:\Videos"));
+        assert!(msg.contains("D:") && msg.contains("264 MB") && msg.contains("100 MB"), "{msg}");
+        assert!(disk_full(&msg));
+        assert!(disk_full(&friendly_error("ERROR: [Errno 28] No space left on device", "")));
+        assert!(!disk_full("HTTP Error 403: Forbidden"));
     }
 }

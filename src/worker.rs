@@ -165,7 +165,16 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
             continue;
         }
         match ytdlp::parse_line(&line) {
-            Line::Item(info, fmts) => on_item(hub, id, &mut t, &info, &fmts),
+            Line::Item(info, fmts) => {
+                on_item(hub, id, &mut t, &info, &fmts);
+                if let Some(msg) = space_problem(&staging, &fmts) {
+                    if let Some(j) = hub.lock().job_mut(id) {
+                        j.push_log(msg.clone());
+                        j.note = msg;
+                    }
+                    ctl.request(STOP_PAUSE);
+                }
+            }
             Line::Progress(p, info) => on_progress(hub, id, &mut t, &p, &info),
             Line::Post(p) => {
                 if p["status"].as_str() == Some("started") {
@@ -207,6 +216,16 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
     }
     let errs = errors.lock().unwrap_or_else(|p| p.into_inner()).clone();
     finish(hub, id, ctl, status.and_then(|s| s.code()), errs, &staging, &browser, None);
+}
+
+/// Before a video downloads: does it fit? Only when yt-dlp knows the sizes.
+fn space_problem(staging: &Path, fmts: &[Value]) -> Option<String> {
+    let sizes: Option<Vec<f64>> =
+        fmts.iter().map(|f| f["filesize"].as_f64().or(f["filesize_approx"].as_f64())).collect();
+    let total = sizes.filter(|s| !s.is_empty())?.iter().sum::<f64>() as u64;
+    let needed = util::space_needed(total, fmts.len() > 1);
+    let free = platform::free_space(staging)?;
+    (free < needed).then(|| util::not_enough_space(needed, free, staging))
 }
 
 fn on_item(hub: &Hub, id: &str, t: &mut Tracker, info: &Value, fmts: &[Value]) {

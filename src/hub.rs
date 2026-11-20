@@ -72,6 +72,10 @@ pub struct Core {
     pub power_at: Option<(WhenDone, u64)>,
     /// "Start now" pressed while outside the download hours.
     pub window_override: bool,
+    /// Free space on the download folder's drive, refreshed by the queue.
+    pub disk_free: Option<u64>,
+    /// Waiting downloads are held because the drive is nearly full.
+    pub disk_hold: bool,
 }
 
 impl Core {
@@ -92,6 +96,8 @@ impl Core {
             when_done: WhenDone::Nothing,
             power_at: None,
             window_override: false,
+            disk_free: None,
+            disk_hold: false,
         }
     }
 
@@ -169,7 +175,12 @@ impl Core {
                         c.request(STOP_PAUSE);
                     }
                 }
-                Status::Queued => j.status = Status::Paused,
+                Status::Queued => {
+                    // A pending automatic retry is called off with it.
+                    j.status = Status::Paused;
+                    j.note.clear();
+                    j.retry_at = 0;
+                }
                 _ => {}
             }
             self.dirty.queue = true;
@@ -381,6 +392,28 @@ impl Core {
 /// it looks like a passing problem (a dropped connection, a busy server, too
 /// many requests), otherwise marked failed.
 pub fn fail_or_retry(j: &mut Job, error: String, auto_retry: bool) {
+    // A full disk isn't a failure of the download: keep the part and pause.
+    if util::disk_full(&error) {
+        j.status = Status::Paused;
+        j.push_log(error.clone());
+        j.note = error;
+        j.error.clear();
+        j.retry_at = 0;
+        return;
+    }
+    // "403 Forbidden" is usually one stream link gone bad; a new run gets
+    // fresh links. Quick, so it doesn't wait for the auto-retry setting.
+    if util::refused(&error)
+        && let Some(secs) = util::refusal_delay(j.refusals)
+    {
+        j.refusals += 1;
+        j.status = Status::Queued;
+        j.retry_at = util::now() + secs;
+        j.push_log(format!("The site refused the download (HTTP 403). Fetching fresh links in {secs} s."));
+        j.note = "The site refused the download: fetching fresh links".into();
+        j.error.clear();
+        return;
+    }
     let delay = if auto_retry { util::retry_delay(&error, j.auto_retries) } else { None };
     match delay {
         Some(secs) => {
@@ -462,5 +495,39 @@ impl Hub {
 
     pub fn new_control() -> Arc<Control> {
         Arc::new(Control::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_is_retried_twice_with_fresh_links_then_fails() {
+        let mut j = Job::new("https://www.youtube.com/watch?v=x", Default::default());
+        j.status = Status::Running;
+        for expected in [1, 2] {
+            fail_or_retry(&mut j, util::REFUSED.into(), false);
+            assert_eq!(j.status, Status::Queued, "even with auto-retry off");
+            assert_eq!(j.refusals, expected);
+            assert!(j.retry_at > 0 && j.error.is_empty());
+            j.status = Status::Running;
+        }
+        fail_or_retry(&mut j, util::REFUSED.into(), false);
+        assert_eq!(j.status, Status::Failed);
+        assert_eq!(j.error, util::REFUSED);
+        j.requeue();
+        assert_eq!(j.refusals, 0, "a manual retry gets fresh tries again");
+    }
+
+    #[test]
+    fn a_full_disk_pauses_and_keeps_the_part() {
+        let mut j = Job::new("https://example.com/v", Default::default());
+        j.status = Status::Running;
+        let msg = util::friendly_error("ERROR: [Errno 28] No space left on device", "");
+        fail_or_retry(&mut j, msg.clone(), true);
+        assert_eq!(j.status, Status::Paused);
+        assert_eq!(j.note, msg);
+        assert!(j.error.is_empty());
     }
 }

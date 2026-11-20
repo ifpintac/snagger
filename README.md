@@ -9,7 +9,7 @@ and the file lands in `Downloads\Snag`.
 
 ## Look
 
-Snag 2.3 looks like a command console: one pale ice-blue line colour on
+Snag 2.4 looks like a command console: one pale ice-blue line colour on
 near-black, hairline modules, clipped-corner frames and keys that light up.
 Dark by default; Settings → Theme has a light version too. The design notes
 (tokens, audit, test tasks) are in `docs/design-console.md`, with screenshots
@@ -76,6 +76,13 @@ checked for a file too.
 - **Tries again by itself** after a dropped connection, a busy server or "too
   many requests" (a few times, waiting longer each time). When a site seems to
   have changed, a failed row offers "update yt-dlp and try again".
+- **"403 Forbidden"** (YouTube refusing one stream link, or an expired file
+  link): Snag fetches fresh links twice (after 5 s and 30 s, the last time one
+  connection at a time) before it gives up with a plain message.
+- **Disk space**: the preview warns when a download won't fit (counting room
+  to join video and audio). A video that won't fit is paused before it
+  starts, a full disk pauses a download and keeps what it has, and waiting
+  downloads are held while less than 256 MB is free.
 - Waits a few seconds between playlist videos so sites don't block you.
 - Never overwrites a file: a second copy becomes `name (2).ext`.
 - Speed limit, retries, proxy, sign-in from your browser (Firefox, Chrome,

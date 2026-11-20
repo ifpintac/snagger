@@ -70,7 +70,9 @@ pub fn inspect(url: &str) -> Result<Probe, String> {
     let status = resp.status().as_u16();
     if status >= 400 {
         return Err(match status {
-            401 | 403 => "The server refused the download (it may need you to be signed in).".into(),
+            401 => "The server wants you to sign in before it sends this file.".into(),
+            // Says "HTTP 403" so the queue tries fresh links first (hub::fail_or_retry).
+            403 => "The server refused the download (HTTP 403). The link may have expired: copy a fresh one from the page, or sign in there first.".into(),
             404 | 410 => "That file isn't there any more (404).".into(),
             _ => format!("The server answered HTTP {status}."),
         });
@@ -245,6 +247,15 @@ fn download(
             ..Default::default()
         };
         let _ = fs::remove_file(&data_path);
+    }
+    if let Some(size) = st.size {
+        let have = fs::metadata(&data_path).map(|m| m.len()).unwrap_or(0);
+        let needed = util::space_needed(size.saturating_sub(have), false);
+        if let Some(free) = crate::platform::free_space(staging)
+            && free < needed
+        {
+            return Err(Fail::Error(util::not_enough_space(needed, free, staging)));
+        }
     }
     if let Some(j) = hub.lock().job_mut(id) {
         if j.title.is_empty() || j.title == util::short_url(url) {

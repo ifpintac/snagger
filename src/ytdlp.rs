@@ -216,7 +216,9 @@ pub fn download_args(job: &Job, s: &Settings, p: &EnginePaths, staging: &Path, a
     }
     push(&mut a, &["--no-mtime", "--no-abort-on-error", "--windows-filenames"]);
     let retries = s.retries.to_string();
-    let frags = s.fragments.to_string();
+    // After two refusals, ask for one piece at a time: some servers refuse
+    // many parallel requests for the same stream.
+    let frags = if job.refusals >= 2 { "1".to_string() } else { s.fragments.to_string() };
     push(&mut a, &["--retries", &retries, "--fragment-retries", &retries, "-N", &frags]);
     if s.restrict_names {
         a.push("--restrict-filenames".into());

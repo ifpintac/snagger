@@ -414,7 +414,10 @@ impl DownloadsUi {
         let mut preview_entry: Option<String> = None;
         let mut back = false;
         let has_back = self.back.is_some();
-        let download_dir = hub.lock().settings.download_dir.clone();
+        let (download_dir, disk_free) = {
+            let c = hub.lock();
+            (c.settings.download_dir.clone(), c.disk_free)
+        };
         widgets::card(ui, |ui| {
             ui.set_width(ui.available_width());
             match &mut look.state {
@@ -467,7 +470,17 @@ impl DownloadsUi {
                     if has_back && Button::quiet("Back to the results").icon(Icon::Back).show(ui).clicked() {
                         back = true;
                     }
-                    preview_body(ui, pv, &look.what, thumbs, &download_dir, &mut close, &mut download, &mut retry);
+                    preview_body(
+                        ui,
+                        pv,
+                        &look.what,
+                        thumbs,
+                        &download_dir,
+                        disk_free,
+                        &mut close,
+                        &mut download,
+                        &mut retry,
+                    );
                 }
                 LookState::Results(r) => {
                     let act = results_body(ui, r, thumbs, &download_dir);
@@ -897,6 +910,7 @@ fn preview_body(
     url: &str,
     thumbs: &mut Thumbs,
     download_dir: &std::path::Path,
+    disk_free: Option<u64>,
     close: &mut bool,
     download: &mut bool,
     retry: &mut Option<(String, PlaylistMode)>,
@@ -1056,6 +1070,36 @@ fn preview_body(
         pv.picker.show(ui, thumbs, "entries", 280.0, false);
         if pv.picker.count() == 0 {
             valid = false;
+        }
+    }
+
+    if !pv.p.is_playlist
+        && let Some(choice) = pv.p.choices.iter().find(|c| c.quality == pv.quality)
+        && let Some(size) = if pv.video == VideoFormat::Mp4 { choice.size_mp4 } else { choice.size }
+        && let Some(free) = disk_free
+    {
+        // A trimmed download is roughly that share of the whole.
+        let share = match (pv.clip, clip_range(&pv.clip_from, &pv.clip_to, pv.p.duration)) {
+            (true, Ok((a, b))) if pv.p.duration > 0 => {
+                let end = if b > 0.0 { b } else { pv.p.duration as f64 };
+                ((end - a) / pv.p.duration as f64).clamp(0.0, 1.0)
+            }
+            _ => 1.0,
+        };
+        let joins = !pv.quality.is_audio();
+        let needed = util::space_needed((size as f64 * share) as u64, joins);
+        if free < needed {
+            ui.add_space(t.s(3));
+            ui.horizontal(|ui| {
+                icons::show(ui, Icon::Warning, t.icon_size, t.warning_text);
+                let msg = format!(
+                    "Not enough disk space: this needs about {} and {} has {} free. Free up some space first, or Snag pauses it before it starts.",
+                    util::fmt_bytes(needed as f64),
+                    util::drive_name(download_dir),
+                    util::fmt_bytes(free as f64)
+                );
+                ui.add(Label::new(widgets::colored(ui, msg, t.warning_text)).wrap());
+            });
         }
     }
 

@@ -755,7 +755,10 @@ fn describe(j: &Job, t: &Tokens, rc: &RowCtx) -> (String, egui::Color32, f32, To
             (text, t.text2, j.progress, Tone::Idle, false)
         }
         Status::Paused => {
-            let text = if j.progress > 0.0 { format!("Paused at {}", pct(j.progress)) } else { "Paused".into() };
+            let mut text = if j.progress > 0.0 { format!("Paused at {}", pct(j.progress)) } else { "Paused".into() };
+            if !j.note.is_empty() {
+                text = format!("{text} · {}", j.note);
+            }
             (text, t.warning_text, j.progress, Tone::Paused, false)
         }
         Status::Done => {

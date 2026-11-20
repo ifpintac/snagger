@@ -304,6 +304,8 @@ pub struct Job {
     pub bytes: u64,
     /// Automatic retries after connection problems, and when the next one is due.
     pub auto_retries: u32,
+    /// Fresh-link retries after the site refused the download (HTTP 403).
+    pub refusals: u32,
     pub retry_at: u64,
     #[serde(skip)]
     pub live: Live,
@@ -350,6 +352,7 @@ impl Job {
         self.control = None;
         self.finished = 0;
         self.auto_retries = 0;
+        self.refusals = 0;
         self.retry_at = 0;
     }
 

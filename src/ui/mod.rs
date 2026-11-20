@@ -405,13 +405,34 @@ impl SnagApp {
     /// Shown on every tab: a pending sleep/shut-down, and downloads waiting
     /// for the download hours.
     fn banners(&mut self, ui: &mut Ui) {
-        let (power, waiting_until) = {
+        let (power, waiting_until, disk_hold) = {
             let c = self.hub.lock();
             let waiting = c.jobs.iter().any(|j| j.status == Status::Queued);
             let blocked = !c.window_override && !c.settings.in_window(crate::settings::local_minute());
-            (c.power_at, (waiting && blocked).then_some(c.settings.window_start))
+            let hold = c.disk_hold.then(|| (c.disk_free.unwrap_or(0), c.settings.download_dir.clone()));
+            (c.power_at, (waiting && blocked).then_some(c.settings.window_start), hold)
         };
         let t = tk(ui);
+        if let Some((free, dir)) = disk_hold {
+            widgets::banner(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    icons::show(ui, Icon::Warning, t.icon_size, t.warning_text);
+                    ui.add(
+                        Label::new(widgets::strong(
+                            ui,
+                            format!(
+                                "Downloads are on hold: {} has only {} free. Free up some space and they start by themselves.",
+                                util::drive_name(&dir),
+                                util::fmt_bytes(free as f64)
+                            ),
+                        ))
+                        .wrap(),
+                    );
+                });
+            });
+            ui.add_space(t.s(4));
+        }
         if let Some((what, at)) = power {
             let left = at.saturating_sub(util::now());
             let mut cancel = false;

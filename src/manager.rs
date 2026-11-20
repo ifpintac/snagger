@@ -16,6 +16,9 @@ use crate::settings::{self, save_text};
 use crate::util;
 use crate::worker;
 
+/// Below this much free space, waiting downloads don't start.
+pub const DISK_FLOOR: u64 = 256 * 1024 * 1024;
+
 pub fn start(hub: &Hub) {
     let (tx, rx) = mpsc::channel::<()>();
     hub.set_waker(tx);
@@ -70,7 +73,11 @@ impl Manager {
             let engine_ok = c.engine.ready && c.engine.busy.is_none() && c.engine.ytdlp.is_some();
             let running = c.jobs.iter().filter(|j| j.status == Status::Running).count();
             let in_window = c.window_override || c.settings.in_window(settings::local_minute());
-            if engine_ok && !c.queue_paused && in_window {
+            c.disk_free = platform::free_space(&c.settings.download_dir);
+            let startable = c.jobs.iter().any(|j| j.status == Status::Queued && !j.retry_pending(now));
+            // Starting more downloads on a nearly full drive only makes them all fail.
+            c.disk_hold = startable && c.disk_free.is_some_and(|f| f < DISK_FLOOR);
+            if engine_ok && !c.queue_paused && in_window && !c.disk_hold {
                 let mut free = (c.settings.parallel as usize).saturating_sub(running);
                 for j in c.jobs.iter_mut() {
                     if free == 0 {
