@@ -1,5 +1,5 @@
 //! Everything about talking to yt-dlp: building command lines, reading a
-//! link's details for the preview, and parsing Snag's progress lines.
+//! link's details for the preview, and parsing Snagger's progress lines.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -88,7 +88,7 @@ pub fn output_template(job: &Job, s: &Settings, staging: &Path) -> String {
     let is_playlist = job.opts.sub_id.is_empty();
 
     // Room for folders + name, after the extension and yt-dlp's
-    // ".fNNN.ext.part-FragNN" suffixes (28) and Snag's " (2)" on a clash.
+    // ".fNNN.ext.part-FragNN" suffixes (28) and Snagger's " (2)" on a clash.
     let mut room = 259usize.saturating_sub(work_len + 32 + clip.len() + sub.len());
     let playlist_len = if is_playlist { (room / 4).clamp(16, 70) } else { 0 };
     let uploader_len = (room / 5).clamp(12, 50);
@@ -567,7 +567,7 @@ fn run_json(paths: &EnginePaths, s: &Settings, args: Vec<OsString>, ctl: &Arc<Co
             err.lines().rev().find(|l| l.starts_with("ERROR")).unwrap_or_else(|| err.lines().last().unwrap_or(""));
         return Err(util::friendly_error(line, &s.cookies_browser));
     }
-    serde_json::from_slice(&out).map_err(|_| "yt-dlp returned something Snag couldn't read.".to_string())
+    serde_json::from_slice(&out).map_err(|_| "yt-dlp returned something Snagger couldn't read.".to_string())
 }
 
 fn read_probe(info: &Value, url: &str, s: &Settings) -> Probe {
@@ -782,8 +782,8 @@ pub fn playlist_title(paths: &EnginePaths, s: &Settings, url: &str) -> Result<(S
         let line = err.lines().rev().find(|l| l.starts_with("ERROR")).unwrap_or("");
         return Err(util::friendly_error(line, &s.cookies_browser));
     }
-    let info: Value =
-        serde_json::from_slice(&out.stdout).map_err(|_| "yt-dlp returned something Snag couldn't read.".to_string())?;
+    let info: Value = serde_json::from_slice(&out.stdout)
+        .map_err(|_| "yt-dlp returned something Snagger couldn't read.".to_string())?;
     if info["_type"].as_str() != Some("playlist") {
         return Err("That's a single video. Follow a channel or playlist link instead.".into());
     }
@@ -881,8 +881,8 @@ mod tests {
                 s.organize = organize;
                 s.name_style = style;
                 for base in [
-                    r"C:\Users\Someone\Downloads\Snag",
-                    r"D:\A Rather Long Folder Name\With Some Nesting\And More Nesting Here\Snag",
+                    r"C:\Users\Someone\Downloads\Snagger",
+                    r"D:\A Rather Long Folder Name\With Some Nesting\And More Nesting Here\Snagger",
                 ] {
                     let staging = Path::new(base).join(".snag-temp").join("abcdef123456");
                     let job = Job::new("https://example.com/v", JobOptions::default());

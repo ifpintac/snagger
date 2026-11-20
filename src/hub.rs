@@ -46,7 +46,7 @@ impl WhenDone {
     }
 }
 
-/// Seconds of warning before Snag sleeps or shuts down the PC.
+/// Seconds of warning before Snagger sleeps or shuts down the PC.
 pub const POWER_COUNTDOWN: u64 = 60;
 
 pub struct Core {
@@ -56,7 +56,7 @@ pub struct Core {
     pub subs: Vec<Subscription>,
     pub engine: EngineState,
     pub queue_paused: bool,
-    /// Links handed over by a second launch of Snag (command line, "Open with").
+    /// Links handed over by a second launch of Snagger (command line, "Open with").
     pub inbox: Vec<String>,
     /// Links noticed on the clipboard, waiting for the user to decide.
     pub clip_offer: Vec<String>,
@@ -105,7 +105,7 @@ impl Core {
         let settings: Settings = load_json::<Option<Settings>>("settings.json").unwrap_or_default().sanitized();
         let mut jobs: Vec<Job> = load_json("queue.json");
         for j in &mut jobs {
-            // Downloads that were running when Snag closed pick up where they left off.
+            // Downloads that were running when Snagger closed pick up where they left off.
             if j.status == Status::Running {
                 j.status = if settings.resume_on_start { Status::Queued } else { Status::Paused };
             } else if j.status == Status::Queued && !settings.resume_on_start {

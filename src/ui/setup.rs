@@ -1,4 +1,4 @@
-//! The first-run screen while Snag fetches its engine.
+//! The first-run screen while Snagger fetches its engine.
 
 use eframe::egui::{self, Ui};
 
@@ -18,11 +18,11 @@ pub fn show(ui: &mut Ui, hub: &Hub) {
         widgets::card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.vertical(|ui| {
-                widgets::title(ui, "Setting up Snag");
+                widgets::title(ui, "Setting up Snagger");
                 ui.add_space(t.s(1));
                 widgets::hint(
                     ui,
-                    "Snag fetches its download engine once, from each project's official GitHub releases, into your user folder. Nothing is installed system-wide.",
+                    "Snagger fetches its download engine once, from each project's official GitHub releases, into your user folder. Nothing is installed system-wide.",
                 );
                 ui.add_space(t.s(4));
                 for part in [Part::YtDlp, Part::Ffmpeg, Part::Deno] {

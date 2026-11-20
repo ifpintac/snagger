@@ -79,7 +79,7 @@ impl SubsUi {
             (c.engine.paths(), c.settings.clone())
         };
         let Some(paths) = paths else {
-            self.error = "Snag is still setting up its download engine.".into();
+            self.error = "Snagger is still setting up its download engine.".into();
             return;
         };
         let (tx, rx) = mpsc::channel();
@@ -149,7 +149,7 @@ impl SubsUi {
         widgets::title(ui, "Subscriptions");
         widgets::hint(
             ui,
-            "Follow a channel or playlist and Snag downloads each new video into its own folder. It checks while Snag is open.",
+            "Follow a channel or playlist and Snagger downloads each new video into its own folder. It checks while Snagger is open.",
         );
         ui.add_space(t.s(4));
 

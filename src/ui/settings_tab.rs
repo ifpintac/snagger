@@ -68,7 +68,7 @@ fn downloads_section(ui: &mut Ui, s: &mut Settings) {
             ui.label(RichText::new(s.download_dir.display().to_string()).monospace());
             if Button::secondary("Change…").icon(Icon::Folder).show(ui).clicked()
                 && let Some(dir) = rfd::FileDialog::new()
-                    .set_title("Where should Snag save downloads?")
+                    .set_title("Where should Snagger save downloads?")
                     .set_directory(&s.download_dir)
                     .pick_folder()
             {
@@ -93,7 +93,7 @@ fn downloads_section(ui: &mut Ui, s: &mut Settings) {
         setting_row(
             ui,
             "Connections per file",
-            "For plain file links (.zip, .pdf, .psd…), which Snag downloads with its own engine.",
+            "For plain file links (.zip, .pdf, .psd…), which Snagger downloads with its own engine.",
             |ui| {
                 widgets::slider(ui, egui::Slider::new(&mut s.connections, 1..=16));
             },
@@ -230,7 +230,7 @@ fn signin_section(ui: &mut Ui, s: &mut Settings) {
         setting_row(
             ui,
             "Signed-in browser",
-            "For private, age-restricted or members-only videos, Snag borrows that browser's sign-in. Firefox works most reliably; close Chrome or Edge first if they refuse.",
+            "For private, age-restricted or members-only videos, Snagger borrows that browser's sign-in. Firefox works most reliably; close Chrome or Edge first if they refuse.",
             |ui| {
                 let label = BROWSERS.iter().find(|(id, _)| *id == s.cookies_browser).map(|(_, n)| *n).unwrap_or("None");
                 egui::ComboBox::from_id_salt("browser").selected_text(label).show_ui(ui, |ui| {
@@ -294,7 +294,7 @@ fn behaviour_section(ui: &mut Ui, s: &mut Settings, confirm: &mut Option<Confirm
         );
         setting_row(ui, "", "", |ui| {
             ui.vertical(|ui| {
-                checkbox(ui, &mut s.resume_on_start, "Continue unfinished downloads when Snag opens");
+                checkbox(ui, &mut s.resume_on_start, "Continue unfinished downloads when Snagger opens");
                 checkbox(ui, &mut s.keep_awake, "Keep the PC awake while downloading");
                 checkbox(ui, &mut s.notify_done, "Flash the taskbar and chime when a batch finishes");
                 checkbox(
@@ -310,7 +310,7 @@ fn behaviour_section(ui: &mut Ui, s: &mut Settings, confirm: &mut Option<Confirm
                 checkbox(
                     ui,
                     &mut s.use_archive,
-                    "Skip videos Snag has downloaded before (even if you deleted the file)",
+                    "Skip videos Snagger has downloaded before (even if you deleted the file)",
                 );
             });
         });
@@ -358,7 +358,7 @@ fn engine_section(ui: &mut Ui, hub: &Hub, s: &mut Settings, e: &engine::EngineSt
             }
         });
         setting_row(ui, "", "", |ui| {
-            checkbox(ui, &mut s.auto_update, "Update automatically when Snag starts");
+            checkbox(ui, &mut s.auto_update, "Update automatically when Snagger starts");
             checkbox(ui, &mut s.nightly, "Use nightly builds (fixes arrive sooner)");
         });
         setting_row(ui, "ffmpeg", "Joins video and audio, converts formats, trims.", |ui| {
@@ -441,7 +441,7 @@ fn browser_section(ui: &mut Ui, hub: &Hub) {
         let t = tk(ui);
         widgets::hint(
             ui,
-            "A “Snag it” button for your browser's bookmarks bar: on any video page, click it and that page opens in Snag.",
+            "A “Snag it” button for your browser's bookmarks bar: on any video page, click it and that page opens in Snagger.",
         );
         ui.add_space(widgets::SECTION_GAP);
         let exe = std::env::current_exe().ok();
@@ -453,14 +453,14 @@ fn browser_section(ui: &mut Ui, hub: &Hub) {
         if ours {
             ui.horizontal(|ui| {
                 icons::show(ui, Icon::Done, t.icon_size, t.success_text);
-                ui.label(widgets::colored(ui, "Set up. The button opens this copy of Snag.", t.success_text));
+                ui.label(widgets::colored(ui, "Set up. The button opens this copy of Snagger.", t.success_text));
             });
         } else if command.is_some() {
             ui.horizontal(|ui| {
                 icons::show(ui, Icon::Warning, t.icon_size, t.warning_text);
                 ui.label(widgets::colored(
                     ui,
-                    "Set up for another copy of Snag. Set it up again to use this one.",
+                    "Set up for another copy of Snagger. Set it up again to use this one.",
                     t.warning_text,
                 ));
             });
@@ -507,9 +507,9 @@ li{margin:6px 0} code{font-family:var(--dk-mono);background:var(--sunken);paddin
 <ol>
 <li>Show the bookmarks bar if it's hidden: <code>Ctrl+Shift+B</code> in Chrome and Edge, or View → Toolbars → Bookmarks Toolbar in Firefox.</li>
 <li>Drag the blue button onto it.</li>
-<li>On any video page, click <b>Snag it</b>. The first time, your browser asks whether to open Snag: tick “Always allow” and choose Open.</li>
+<li>On any video page, click <b>Snag it</b>. The first time, your browser asks whether to open Snagger: tick “Always allow” and choose Open.</li>
 </ol>
-<p>Try it here: <a href="snag:https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DjNQXAC9IVRw">send a test video to Snag</a>.</p>
+<p>Try it here: <a href="snag:https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DjNQXAC9IVRw">send a test video to Snagger</a>.</p>
 </body></html>
 "#;
     let path = settings::data_dir().join("browser-button.html");
@@ -536,7 +536,7 @@ fn about_section(ui: &mut Ui) {
     section(ui, Icon::Info, "About", |ui| {
         widgets::para(
             ui,
-            format!("Snag {}. Everything runs on this PC; nothing is uploaded anywhere.", env!("CARGO_PKG_VERSION")),
+            format!("Snagger {}. Everything runs on this PC; nothing is uploaded anywhere.", env!("CARGO_PKG_VERSION")),
         );
         ui.add_space(widgets::SECTION_GAP);
         ui.horizontal_wrapped(|ui| {

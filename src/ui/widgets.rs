@@ -1,4 +1,4 @@
-//! Snag's components, drawn in the command-console language.
+//! Snagger's components, drawn in the command-console language.
 //!
 //! One pale colour does everything: text, lines and fills are the accent at
 //! different strengths on near-black. Modules are unboxed: a hairline with a

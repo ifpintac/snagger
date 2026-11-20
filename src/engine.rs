@@ -1,7 +1,7 @@
-//! The download engine Snag drives: yt-dlp (the site extractors), ffmpeg
+//! The download engine Snagger drives: yt-dlp (the site extractors), ffmpeg
 //! (joining and converting) and a JavaScript runtime that YouTube needs.
 //! All three come from their official GitHub releases and live in
-//! %LOCALAPPDATA%\Snag\engine. Nothing is installed system-wide.
+//! %LOCALAPPDATA%\Snagger\engine. Nothing is installed system-wide.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -436,7 +436,7 @@ fn agent(follow_redirects: bool) -> ureq::Agent {
         .timeout_connect(Some(Duration::from_secs(20)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .http_status_as_error(false)
-        .user_agent("Snag/2.0");
+        .user_agent("Snagger/2.0");
     if !follow_redirects {
         cfg = cfg.max_redirects(0).max_redirects_will_error(false);
     }

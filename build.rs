@@ -1,5 +1,5 @@
 //! Embeds the app icon (Microsoft Fluent Emoji "Inbox tray", MIT) and version
-//! details into Snag.exe.
+//! details into Snagger.exe.
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -29,8 +29,8 @@ fn main() {
 
     let mut res = winresource::WindowsResource::new();
     res.set_icon(ico_path.to_str().expect("utf-8 path"))
-        .set("ProductName", "Snag")
-        .set("FileDescription", "Snag video downloader")
+        .set("ProductName", "Snagger")
+        .set("FileDescription", "Snagger video downloader")
         .set("LegalCopyright", "MIT licensed");
     res.compile().expect("embed resources (needs the Windows SDK's rc.exe)");
 }

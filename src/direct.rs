@@ -1,4 +1,4 @@
-//! Snag's own downloader for plain file links: a .zip, a .pdf, an .mp4 or a
+//! Snagger's own downloader for plain file links: a .zip, a .pdf, an .mp4 or a
 //! .psd sitting on a server. Pure Rust, no yt-dlp.
 //!
 //! Files whose server allows byte ranges are cut into chunks that several
@@ -24,7 +24,7 @@ use crate::hub::Hub;
 use crate::model::{Control, Live, STOP_CANCEL, STOP_NONE, STOP_PAUSE, Stage, Status};
 use crate::util;
 
-const UA: &str = concat!("Snag/", env!("CARGO_PKG_VERSION"));
+const UA: &str = concat!("Snagger/", env!("CARGO_PKG_VERSION"));
 const MAX_CHUNK: u64 = 8 * 1024 * 1024;
 const MIN_CHUNK: u64 = 256 * 1024;
 /// Below this, one connection is as fast as several.

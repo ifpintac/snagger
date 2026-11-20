@@ -505,7 +505,7 @@ pub fn friendly_error(err: &str, browser: &str) -> String {
     let signin = "If you can watch it while signed in, pick that browser under Settings → Sign-in and try again.";
 
     if low.contains("unsupported url") {
-        return "Snag can't find a video at that link. Open the video itself (not a profile or search page) and copy its address.".into();
+        return "Snagger can't find a video at that link. Open the video itself (not a profile or search page) and copy its address.".into();
     }
     if (low.contains("could not copy") && low.contains("cookie"))
         || low.contains("failed to decrypt")
@@ -625,6 +625,18 @@ pub fn not_enough_space(needed: u64, free: u64, dir: &Path) -> String {
     )
 }
 
+/// True when the registered `snag:` command runs a copy that's gone, or the
+/// old Snag.exe, rather than `exe`.
+pub fn button_needs_relink(command: &str, exe: &Path) -> bool {
+    let registered = command.trim_start().strip_prefix('"').and_then(|r| r.split('"').next()).unwrap_or("");
+    if registered.is_empty() || registered.eq_ignore_ascii_case(&exe.display().to_string()) {
+        return false;
+    }
+    let path = Path::new(registered);
+    let old_name = path.file_name().is_some_and(|n| n.eq_ignore_ascii_case("Snag.exe"));
+    old_name || !path.exists()
+}
+
 pub fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -732,7 +744,7 @@ pub fn from_snag_scheme(arg: &str) -> Option<String> {
     extract_links(&decoded).into_iter().next()
 }
 
-/// File types Snag downloads itself, without yt-dlp, when a link ends in them.
+/// File types Snagger downloads itself, without yt-dlp, when a link ends in them.
 const FILE_EXTS: &[&str] = &[
     "zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "img", "dmg", "pkg", "exe", "msi", "msix",
     "apk", "appimage", "deb", "rpm", "pdf", "epub", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "psd", "psb",
@@ -828,7 +840,7 @@ mod tests {
     #[test]
     fn cleans_ytdlp_errors() {
         assert_eq!(clean_message("ERROR: [youtube] abc123: Video unavailable"), "Video unavailable");
-        assert!(friendly_error("ERROR: Unsupported URL: https://x", "").starts_with("Snag can't"));
+        assert!(friendly_error("ERROR: Unsupported URL: https://x", "").starts_with("Snagger can't"));
     }
 
     #[test]
@@ -865,5 +877,21 @@ mod tests {
         assert!(disk_full(&msg));
         assert!(disk_full(&friendly_error("ERROR: [Errno 28] No space left on device", "")));
         assert!(!disk_full("HTTP Error 403: Forbidden"));
+    }
+
+    #[test]
+    fn the_browser_button_moves_from_snag_to_snagger() {
+        let dir = std::env::temp_dir();
+        let me = dir.join("Snagger.exe");
+        let quoted = |p: &Path| format!("\"{}\" \"%1\"", p.display());
+        // Set up for the old Snag.exe: move it here.
+        assert!(button_needs_relink(&quoted(&dir.join("Snag.exe")), &me));
+        // Set up for this copy: leave it.
+        assert!(!button_needs_relink(&quoted(&me), &me));
+        // Set up for a copy that's gone: take it.
+        assert!(button_needs_relink(&quoted(&dir.join("gone-for-good").join("Snagger.exe")), &me));
+        // Set up for another copy that still exists: leave it (Settings offers to switch).
+        let other = std::env::current_exe().unwrap();
+        assert!(!button_needs_relink(&quoted(&other), &me));
     }
 }

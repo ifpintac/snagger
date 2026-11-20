@@ -157,7 +157,7 @@ impl DownloadsUi {
         };
         let file_first = util::file_like_url(&url);
         if paths.is_none() && !file_first {
-            self.fail_look(&url, "Snag is still setting up its download engine. Try again in a moment.");
+            self.fail_look(&url, "Snagger is still setting up its download engine. Try again in a moment.");
             return;
         }
         let ctl = Hub::new_control();
@@ -166,10 +166,10 @@ impl DownloadsUi {
         thread::spawn(move || {
             let probe_media = || match &paths {
                 Some(p) => ytdlp::probe(p, &settings, &u, mode, &c2).map(Found::Media),
-                None => Err("Snag is still setting up its download engine. Try again in a moment.".into()),
+                None => Err("Snagger is still setting up its download engine. Try again in a moment.".into()),
             };
             let r = if file_first {
-                // Looks like a file (…/plans.zip): Snag's own engine, unless it's really a page.
+                // Looks like a file (…/plans.zip): Snagger's own engine, unless it's really a page.
                 match direct::inspect(&u) {
                     Ok(f) if !f.is_page() => Ok(Found::File(f)),
                     _ => probe_media(),
@@ -177,7 +177,7 @@ impl DownloadsUi {
             } else {
                 match probe_media() {
                     // yt-dlp doesn't know the site: maybe it's a plain file link.
-                    Err(e) if e.starts_with("Snag can't find a video") => match direct::inspect(&u) {
+                    Err(e) if e.starts_with("Snagger can't find a video") => match direct::inspect(&u) {
                         Ok(f) if !f.is_page() => Ok(Found::File(f)),
                         _ => Err(e),
                     },
@@ -205,7 +205,7 @@ impl DownloadsUi {
             (c.engine.paths(), c.settings.clone())
         };
         let Some(paths) = paths else {
-            self.fail_look(&query, "Snag is still setting up its download engine. Try again in a moment.");
+            self.fail_look(&query, "Snagger is still setting up its download engine. Try again in a moment.");
             return;
         };
         self.link = query.clone();
@@ -581,7 +581,7 @@ impl DownloadsUi {
             let mut c = hub.lock();
             let id = c.add_job(job);
             c.move_to_top(&id);
-            // Remember what the user changed, like the original Snag did. A
+            // Remember what the user changed, like the original Snagger did. A
             // fallback the preview picked by itself (say "Best" for a 480p
             // video) isn't a choice and mustn't replace the default.
             let before = c.settings.preset;
@@ -704,7 +704,7 @@ impl DownloadsUi {
             let mut extra = String::new();
             if files > 0 {
                 extra.push_str(&format!(
-                    " · {files} plain file{} (Snag's own engine)",
+                    " · {files} plain file{} (Snagger's own engine)",
                     if files == 1 { "" } else { "s" }
                 ));
             }
@@ -761,7 +761,7 @@ impl DownloadsUi {
             };
             {
                 let mut c = hub.lock();
-                // Plain file links go to Snag's own engine, the rest to yt-dlp.
+                // Plain file links go to Snagger's own engine, the rest to yt-dlp.
                 let (file_links, media): (Vec<String>, Vec<String>) =
                     b.links.iter().cloned().partition(|l| util::file_like_url(l));
                 let (mut added, mut skipped) = c.add_links(&media, &opts);
@@ -950,7 +950,7 @@ fn preview_body(
                     icons::show(ui, Icon::Info, t.icon_size, t.warning_text);
                     ui.label(widgets::colored(
                         ui,
-                        "Live now: Snag records from this moment until the stream ends or you stop it.",
+                        "Live now: Snagger records from this moment until the stream ends or you stop it.",
                         t.warning_text,
                     ));
                 });
@@ -1093,7 +1093,7 @@ fn preview_body(
             ui.horizontal(|ui| {
                 icons::show(ui, Icon::Warning, t.icon_size, t.warning_text);
                 let msg = format!(
-                    "Not enough disk space: this needs about {} and {} has {} free. Free up some space first, or Snag pauses it before it starts.",
+                    "Not enough disk space: this needs about {} and {} has {} free. Free up some space first, or Snagger pauses it before it starts.",
                     util::fmt_bytes(needed as f64),
                     util::drive_name(download_dir),
                     util::fmt_bytes(free as f64)
@@ -1192,9 +1192,9 @@ fn file_body(
             ui.label(muted(ui, meta.join("  ·  ")));
             ui.add_space(t.s(1));
             let how = if f.ranges {
-                "A plain file. Snag downloads it with its own engine, several connections at once, and can pause and resume it."
+                "A plain file. Snagger downloads it with its own engine, several connections at once, and can pause and resume it."
             } else {
-                "A plain file. This server doesn't allow resuming, so Snag downloads it in one go."
+                "A plain file. This server doesn't allow resuming, so Snagger downloads it in one go."
             };
             widgets::para(ui, how);
         });

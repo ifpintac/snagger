@@ -155,11 +155,11 @@ mod imp {
         if err.0 == 0 { Ok(()) } else { Err(format!("Windows refused (error {})", err.0)) }
     }
 
-    /// Makes `snag:<link>` addresses (the browser button) open this Snag.exe.
+    /// Makes `snag:<link>` addresses (the browser button) open this Snagger.exe.
     /// Per-user (HKEY_CURRENT_USER); no admin rights needed.
     pub fn register_protocol(exe: &Path) -> Result<(), String> {
         let exe = exe.display().to_string();
-        reg_set(PROTOCOL_KEY, None, "URL:Snag")?;
+        reg_set(PROTOCOL_KEY, None, "URL:Snagger")?;
         reg_set(PROTOCOL_KEY, Some("URL Protocol"), "")?;
         reg_set(&format!(r"{PROTOCOL_KEY}\DefaultIcon"), None, &format!("\"{exe}\",0"))?;
         reg_set(&format!(r"{PROTOCOL_KEY}\shell\open\command"), None, &format!("\"{exe}\" \"%1\""))
@@ -297,7 +297,7 @@ mod imp {
         Error(f32),
     }
 
-    /// The progress shown on Snag's taskbar button. Lives on one thread.
+    /// The progress shown on Snagger's taskbar button. Lives on one thread.
     pub struct Taskbar {
         list: Option<ITaskbarList3>,
         last: Option<Bar>,
@@ -350,7 +350,7 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    //! Enough for the app to build elsewhere; Snag targets Windows.
+    //! Enough for the app to build elsewhere; Snagger targets Windows.
     use super::*;
     use std::ffi::OsStr;
 

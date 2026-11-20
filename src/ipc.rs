@@ -1,4 +1,4 @@
-//! One Snag at a time. Launching Snag again (a shortcut, `Snag.exe <link>`,
+//! One Snagger at a time. Launching Snagger again (a shortcut, `Snagger.exe <link>`,
 //! "Open with") hands its links to the window that's already open, over a
 //! loopback socket guarded by a random token, then exits.
 
@@ -26,7 +26,7 @@ fn instance_file() -> std::path::PathBuf {
     data_dir().join("instance.json")
 }
 
-/// True when another Snag took the links (so this one should exit).
+/// True when another Snagger took the links (so this one should exit).
 pub fn forward_to_running(links: &[String]) -> bool {
     let Ok(text) = fs::read_to_string(instance_file()) else { return false };
     let Ok(inst) = serde_json::from_str::<Instance>(&text) else { return false };
@@ -75,7 +75,7 @@ fn handle(hub: &Hub, stream: TcpStream, token: &str) {
     let mut reader = BufReader::new(stream.take(1_000_000));
     let mut first = String::new();
     if reader.read_line(&mut first).is_err() || first.trim() != format!("SNAG1 {token}") {
-        return; // not another Snag (a web page poking at localhost, say)
+        return; // not another Snagger (a web page poking at localhost, say)
     }
     let mut links = Vec::new();
     let mut show = false;

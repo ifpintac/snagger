@@ -1,4 +1,4 @@
-//! What Snag keeps track of: download jobs, quality presets, history entries
+//! What Snagger keeps track of: download jobs, quality presets, history entries
 //! and subscriptions. Everything here is saved as JSON in the data folder.
 
 use std::path::PathBuf;
@@ -200,7 +200,7 @@ pub struct JobOptions {
     /// Set for subscription checks: only fetch what isn't in the archive yet.
     pub sub_id: String,
     pub break_on_existing: bool,
-    /// A plain file link, downloaded by Snag's own engine instead of yt-dlp.
+    /// A plain file link, downloaded by Snagger's own engine instead of yt-dlp.
     pub direct: bool,
 }
 

@@ -1,6 +1,6 @@
 //! Design tokens, fonts and the base egui style.
 //!
-//! Snag's look is a command console: one pale line colour on near-black,
+//! Snagger's look is a command console: one pale line colour on near-black,
 //! hairline modules, clipped-corner frames and keys that light up. Every
 //! colour, size and duration the UI uses comes from [`Tokens`]; nothing else
 //! hard-codes them. The dark set mirrors the design brief one-to-one. Text is
@@ -28,7 +28,7 @@ pub struct Tokens {
     pub fs: f32,
     pub fs_lg: f32,
     pub fs_xl: f32,
-    /// In the set for completeness; no text in Snag is that large.
+    /// In the set for completeness; no text in Snagger is that large.
     #[allow(dead_code)]
     pub fs_2xl: f32,
     pub lh: f32,
@@ -78,7 +78,7 @@ pub struct Tokens {
     // motion, in seconds
     pub dur_fast: f32,
     pub dur_base: f32,
-    /// In the set for completeness; Snag has no slow transitions.
+    /// In the set for completeness; Snagger has no slow transitions.
     #[allow(dead_code)]
     pub dur_slow: f32,
 }
@@ -140,7 +140,7 @@ impl Tokens {
         }
     }
 
-    /// Derived for Snag's Light setting with the same rules: one ink colour
+    /// Derived for Snagger's Light setting with the same rules: one ink colour
     /// (the accent) on pale neutrals at hue 216. Not part of the brief.
     pub const fn light() -> Tokens {
         let d = Tokens::dark();
@@ -326,7 +326,7 @@ pub fn reduced_motion() -> bool {
 }
 
 /// Maps the tokens onto egui's own widgets (combo boxes, sliders, menus,
-/// windows, tooltips, scroll bars), so built-ins match Snag's components.
+/// windows, tooltips, scroll bars), so built-ins match Snagger's components.
 pub fn apply_style(ctx: &egui::Context, pref: ThemePref) {
     ctx.set_theme(match pref {
         ThemePref::System => ThemePreference::System,

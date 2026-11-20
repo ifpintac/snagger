@@ -1,4 +1,4 @@
-//! User settings, where Snag keeps its files, and JSON load/save.
+//! User settings, where Snagger keeps its files, and JSON load/save.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -122,7 +122,7 @@ pub struct Settings {
     pub proxy: String,
     pub retries: u32,
     pub fragments: u32,
-    /// Connections per plain file download (Snag's own engine).
+    /// Connections per plain file download (Snagger's own engine).
     pub connections: u32,
     /// Wait a few seconds between playlist videos, so sites don't block you.
     pub gentle_playlists: bool,
@@ -249,22 +249,41 @@ pub const BROWSERS: &[(&str, &str)] = &[
 // Locations
 // --------------------------------------------------------------------------
 
-/// The user's real Downloads folder (even when moved), plus \Snag.
+/// The user's real Downloads folder (even when moved), plus \Snagger.
 pub fn default_download_dir() -> PathBuf {
     dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Snag")
+        .join("Snagger")
 }
 
-/// Settings, queue, history: %APPDATA%\Snag
+/// Versions up to 2.4 were called Snag and kept their folders under that
+/// name. Moves them to the new name once, at startup (before anything reads
+/// them); if a folder can't be moved (an old copy still open), it's used
+/// where it is.
+pub fn migrate_from_snag() {
+    for base in [dirs::config_dir(), dirs::data_local_dir()].into_iter().flatten() {
+        let (old, new) = (base.join("Snag"), base.join("Snagger"));
+        if old.is_dir() && !new.exists() {
+            let _ = std::fs::rename(&old, &new);
+        }
+    }
+}
+
+/// `base`\Snagger, or `base`\Snag while that couldn't be moved yet.
+fn app_dir(base: PathBuf) -> PathBuf {
+    let (old, new) = (base.join("Snag"), base.join("Snagger"));
+    if !new.exists() && old.is_dir() { old } else { new }
+}
+
+/// Settings, queue, history: %APPDATA%\Snagger
 pub fn data_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Snag")
+    app_dir(dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")))
 }
 
-/// yt-dlp, ffmpeg, Deno: %LOCALAPPDATA%\Snag\engine
+/// yt-dlp, ffmpeg, Deno: %LOCALAPPDATA%\Snagger\engine
 pub fn engine_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(data_dir).join("Snag").join("engine")
+    app_dir(dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."))).join("engine")
 }
 
 pub fn archive_path() -> PathBuf {

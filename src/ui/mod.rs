@@ -118,10 +118,14 @@ impl eframe::App for SnagApp {
             let running: Vec<f32> = c.jobs.iter().filter(|j| j.status == Status::Running).map(|j| j.progress).collect();
             let waiting = c.jobs.iter().filter(|j| j.status == Status::Queued).count();
             let title = if running.is_empty() {
-                if waiting > 0 && c.queue_paused { "Snag · queue paused".to_string() } else { "Snag".to_string() }
+                if waiting > 0 && c.queue_paused {
+                    "Snagger · queue paused".to_string()
+                } else {
+                    "Snagger".to_string()
+                }
             } else {
                 let pct = (running.iter().sum::<f32>() / running.len() as f32 * 100.0).floor();
-                format!("Snag · {} downloading · {pct}%", running.len())
+                format!("Snagger · {} downloading · {pct}%", running.len())
             };
             let any_active = !running.is_empty() || c.engine.busy.is_some();
             (inbox, toasts, c.settings.theme, title, any_active)
@@ -306,7 +310,7 @@ impl SnagApp {
         };
         let t = tk(ui);
         ui.horizontal(|ui| {
-            widgets::title(ui, "Snag");
+            widgets::title(ui, "Snagger");
             ui.add_space(t.s(6));
             let tabs = [
                 (Tab::Downloads, Icon::Download, "Downloads"),
@@ -587,18 +591,18 @@ impl SnagApp {
             ),
             Confirm::ClearArchive => (
                 "Forget downloaded videos?".to_string(),
-                "Snag will no longer skip videos it downloaded before. Files aren't touched.".to_string(),
+                "Snagger will no longer skip videos it downloaded before. Files aren't touched.".to_string(),
                 "Forget",
             ),
             Confirm::RemoveSub(_, name) => (
                 format!("Unfollow {name}?"),
-                "Snag stops checking it for new videos. Files already downloaded stay.".to_string(),
+                "Snagger stops checking it for new videos. Files already downloaded stay.".to_string(),
                 "Unfollow",
             ),
             Confirm::Quit(n) => (
-                "Quit Snag?".to_string(),
+                "Quit Snagger?".to_string(),
                 format!(
-                    "{n} download{} running. {} pause now and continue the next time you open Snag.",
+                    "{n} download{} running. {} pause now and continue the next time you open Snagger.",
                     if *n == 1 { " is" } else { "s are" },
                     if *n == 1 { "It will" } else { "They will" }
                 ),
@@ -640,7 +644,7 @@ impl SnagApp {
             }
             Some(Confirm::ClearArchive) => {
                 let _ = std::fs::remove_file(crate::settings::archive_path());
-                self.toast(ctx, "Snag forgot which videos it downloaded before.".into());
+                self.toast(ctx, "Snagger forgot which videos it downloaded before.".into());
             }
             Some(Confirm::RemoveSub(id, _)) => self.hub.lock().remove_subscription(&id),
             Some(Confirm::Quit(_)) => {

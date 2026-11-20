@@ -144,7 +144,7 @@ impl Manager {
             if self.was_active && c.power_at.is_some() {
                 // Something new started downloading: forget the sleep/shut-down.
                 c.power_at = None;
-                c.toast("New downloads started, so Snag won't sleep or shut down the PC.");
+                c.toast("New downloads started, so Snagger won't sleep or shut down the PC.");
             }
             if let Some((wd, at)) = c.power_at
                 && now >= at

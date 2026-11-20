@@ -1,4 +1,4 @@
-//! The History tab: everything Snag has saved, searchable.
+//! The History tab: everything Snagger has saved, searchable.
 
 use eframe::egui::{self, Align, Label, Layout, Sense, Ui, UiBuilder, vec2};
 

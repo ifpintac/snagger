@@ -2855,7 +2855,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "snag"
+name = "snagger"
 version = "2.4.0"
 dependencies = [
  "arboard",

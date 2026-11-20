@@ -1,6 +1,6 @@
-# Snag 2.3: Command console
+# Snagger 2.3: Command console
 
-This restyle changes only the style layer of Snag. Functions, content, structure and flows are the same as in 2.2. The previous Neumorphism notes and screenshots are in `archive/neumorphism/`.
+This restyle changes only the style layer of Snagger. Functions, content, structure and flows are the same as in 2.2. The previous Neumorphism notes and screenshots are in `archive/neumorphism/`.
 
 ## 1. The style, and the tokens
 
@@ -28,7 +28,7 @@ Notes on the mapping:
   - the progress track;
   - hover;
   - pressed and open states.
-- **Light theme.** `Tokens::light()` is derived for Snag's existing Theme setting and is not part of the brief. It uses one ink colour (#163D42) as both text and accent, on pale neutrals at hue 216, and passes the same contrast test.
+- **Light theme.** `Tokens::light()` is derived for Snagger's existing Theme setting and is not part of the brief. It uses one ink colour (#163D42) as both text and accent, on pale neutrals at hue 216, and passes the same contrast test.
 - **Default theme.** It is now **Dark**, because the brief defines a dark style. "Match Windows" and Light are still offered.
 - **Fonts and icons.**
   - Fonts are bundled from the upstream projects: Saira from Omnibus-Type, Fira Code from tonsky/FiraCode. Both are under the OFL, and the licence files sit in `assets/fonts/`.
@@ -57,14 +57,14 @@ The 2.2 build was audited against the brief. Problems are listed by severity (0 
 | 1 | Search results | 6 Recognition | With compact 36 px rows the channel and view-count line disappeared (egui hides rows that overflow). | 3 | Row height is measured from the real font heights (`picker::row_height`). |
 | 2 | Chosen rows (queue, picker) | 10 Accessibility | `--text2` on `--accent-soft` is 3.9:1. | 2 | Secondary text on a chosen row switches to `--text` (`widgets::sub_color`). |
 | 3 | Every icon | 1 Visibility | Phosphor Thin strokes are 0.5 px at 16 px and render half-strength. | 2 | Coverage gain of 1.6 at raster time (`icons::INK_GAIN`). Shapes are unchanged. |
-| 4 | Video titles, file names | 2 Real world | Uppercase headings would rewrite people's titles and names. | 2 | `widgets::content_title` keeps the original case. Only Snag's own headings are uppercase. |
+| 4 | Video titles, file names | 2 Real world | Uppercase headings would rewrite people's titles and names. | 2 | `widgets::content_title` keeps the original case. Only Snagger's own headings are uppercase. |
 | 5 | Lists on near-black | 1 Visibility | The idle scroll handle was invisible, so there was no cue that a list scrolls. | 2 | The handle uses the line colour and stays at 35 % when idle. |
 | 6 | Destructive keys | 10 Accessibility | White isn't a token, and `--text` on `--danger` is 3.9:1. | 2 | Danger is an outline in `--danger` with a `--danger-text` label (8.7:1). Pressed, it fills `--danger-text` with an `--on-accent` label (8.3:1). |
 | 7 | Monospace file names | 8 Aesthetic | A full-width colon (from yt-dlp's file names) showed as a missing-glyph box. | 1 | File names are scanned for script fonts, and the CJK fallback now covers monospace too. |
 | 8 | Slider rails | 8 Aesthetic | The `--accent-soft` trailing fill on `--dk-dim` was nearly invisible: noise with no meaning. | 1 | Trailing fill is off. The value sits in its own box beside the rail. |
-| 9 | Combo-box dropdowns | 4 Consistency | egui's built-in dropdown frame can't take clipped corners. | 1 | It keeps a 1 px square frame in `--border-strong`. Menus Snag draws itself are clipped. |
-| 10 | All controls | 10 Accessibility | 28 px controls are below the brief's 44 px touch rule. | 1 | Kept. Snag is a mouse-driven desktop app, and 28 px clears WCAG 2.2 AA's 24 px target. *Needs a second opinion.* |
-| 11 | Big numbers | Rule 2 | "Big numbers are light" would add a fourth weight. | 0 | The rule wins: 400 / 500 / 600 only. Snag has no big numbers anyway. |
+| 9 | Combo-box dropdowns | 4 Consistency | egui's built-in dropdown frame can't take clipped corners. | 1 | It keeps a 1 px square frame in `--border-strong`. Menus Snagger draws itself are clipped. |
+| 10 | All controls | 10 Accessibility | 28 px controls are below the brief's 44 px touch rule. | 1 | Kept. Snagger is a mouse-driven desktop app, and 28 px clears WCAG 2.2 AA's 24 px target. *Needs a second opinion.* |
+| 11 | Big numbers | Rule 2 | "Big numbers are light" would add a fourth weight. | 0 | The rule wins: 400 / 500 / 600 only. Snagger has no big numbers anyway. |
 
 Still open from the 2.2 audit, each marked *needs a second opinion*:
 
@@ -153,7 +153,7 @@ Each item gives the before (2.2) and the after (2.3).
 
 ### Type and motion
 
-- **Type:** Snag's own headings are uppercase Saira 500, tracked .12 em. Content titles keep their case. Values (speeds, sizes, times, paths, versions) are set in Fira Code.
+- **Type:** Snagger's own headings are uppercase Saira 500, tracked .12 em. Content titles keep their case. Values (speeds, sizes, times, paths, versions) are set in Fira Code.
 - **Motion:** hover and press take 90 ms (`--dur-fast`); egui's own transitions take 140 ms (`--dur-base`). With Windows animations off, everything is instant.
 
 ### The rest
@@ -201,7 +201,7 @@ Each item gives the before (2.2) and the after (2.3).
 2. Search for Blender's open movies and download the two shortest.
 3. Pause everything that's downloading, then restart just one.
 4. Retry the failed downloads, then remove the ones that fail again.
-5. Set Snag to download only at night and sleep the PC when it's done.
+5. Set Snagger to download only at night and sleep the PC when it's done.
 
 ## Screens (`docs/screens`)
 

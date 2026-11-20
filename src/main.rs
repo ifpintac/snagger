@@ -1,6 +1,6 @@
-//! Snag: a private video and audio downloader for the desktop.
+//! Snagger: a private video and audio downloader for the desktop.
 //!
-//! The window is native (egui). Downloads are done by yt-dlp, which Snag
+//! The window is native (egui). Downloads are done by yt-dlp, which Snagger
 //! installs, updates and drives for you; nothing needs Python.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -56,7 +56,22 @@ fn app_icon() -> egui::IconData {
     }
 }
 
+/// The browser button (`snag:` links) was set up for Snag.exe, which this
+/// renamed app replaces: point it here. Development builds never take it.
+fn relink_browser_button() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    if let (Some(cmd), Ok(exe)) = (platform::protocol_command(), std::env::current_exe())
+        && util::button_needs_relink(&cmd, &exe)
+    {
+        let _ = platform::register_protocol(&exe);
+    }
+}
+
 fn main() -> eframe::Result {
+    settings::migrate_from_snag();
+    relink_browser_button();
     let links = links_from_args();
     // Already open? Hand the links over and bring that window forward.
     if ipc::forward_to_running(&links) {
@@ -71,7 +86,7 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Snag")
+            .with_title("Snagger")
             .with_app_id("snag")
             .with_inner_size([1060.0, 760.0])
             .with_min_inner_size([760.0, 520.0])
@@ -81,5 +96,5 @@ fn main() -> eframe::Result {
         persist_window: true,
         ..Default::default()
     };
-    eframe::run_native("Snag", options, Box::new(move |cc| Ok(Box::new(ui::SnagApp::new(cc, hub, links)))))
+    eframe::run_native("Snagger", options, Box::new(move |cc| Ok(Box::new(ui::SnagApp::new(cc, hub, links)))))
 }

@@ -1,15 +1,15 @@
-# Snag 2
+# Snagger 2
 
 A private video and audio downloader for your desktop. A native Windows app
 written in Rust: no Python, no browser tab, no console window.
 
 Paste a link from YouTube, TikTok, Instagram, X, Reddit, Facebook, Vimeo,
 Twitch, SoundCloud or any of the 1,800+ sites yt-dlp supports, pick a quality,
-and the file lands in `Downloads\Snag`.
+and the file lands in `Downloads\Snagger`.
 
 ## Look
 
-Snag 2.4 looks like a command console: one pale ice-blue line colour on
+Snagger 2.4 looks like a command console: one pale ice-blue line colour on
 near-black, hairline modules, clipped-corner frames and keys that light up.
 Dark by default; Settings → Theme has a light version too. The design notes
 (tokens, audit, test tasks) are in `docs/design-console.md`, with screenshots
@@ -17,7 +17,7 @@ in `docs/screens`.
 
 ## Run it
 
-Double-click **Snag.exe**. The first launch fetches the download engine
+Double-click **Snagger.exe**. The first launch fetches the download engine
 (about 110 MB, from the projects' own GitHub releases) and then you're ready.
 
 ## What it does
@@ -28,17 +28,17 @@ Double-click **Snag.exe**. The first launch fetches the download engine
   Tick several results and download them together, or press the eye on a row
   to preview it first (and come back to the results after).
 - **Add many**: paste a whole list, or any text that contains links (a chat, an
-  email, a web page). Snag pulls out every link and skips duplicates.
+  email, a web page). Snagger pulls out every link and skips duplicates.
 - **Import**: every link in a `.txt`, `.csv`, `.html`, bookmarks export or
   `.url` shortcut. You can also drop such files onto the window.
-- **Copied links**: copy a video link in your browser and Snag offers to
+- **Copied links**: copy a video link in your browser and Snagger offers to
   download it (or, if you choose, queues it straight away).
 - **Browser button**: Settings → Browser button adds a "Snag it" bookmark; on
-  any video page, click it and that page opens in Snag (via `snag:` links).
-- `Snag.exe <link>` or "Open with" passes links to the window that's already open.
+  any video page, click it and that page opens in Snagger (via `snag:` links).
+- `Snagger.exe <link>` or "Open with" passes links to the window that's already open.
 
 **Plain files**: a link to a file rather than a page (`.zip`, `.pdf`, `.psd`,
-`.blend`, `.mp4` on a server…) is downloaded by Snag's own Rust engine: several
+`.blend`, `.mp4` on a server…) is downloaded by Snagger's own Rust engine: several
 connections at once (6 by default), pause and resume, a speed limit, and a
 retry for any piece whose connection stalls. Links yt-dlp doesn't recognise are
 checked for a file too.
@@ -62,7 +62,7 @@ checked for a file too.
 - Runs 1 to 10 downloads at once (3 by default); the rest wait their turn.
 - Pause, resume, cancel, retry, "download next", move to the end, per row or
   all at once. Retrying a playlist only fetches the videos that failed.
-- Closing Snag pauses running downloads; they continue from where they
+- Closing Snagger pauses running downloads; they continue from where they
   stopped the next time it opens.
 - Progress, speed and time left per download, in the window title and on the
   taskbar button (red if something in the batch failed). The taskbar flashes
@@ -77,7 +77,7 @@ checked for a file too.
   many requests" (a few times, waiting longer each time). When a site seems to
   have changed, a failed row offers "update yt-dlp and try again".
 - **"403 Forbidden"** (YouTube refusing one stream link, or an expired file
-  link): Snag fetches fresh links twice (after 5 s and 30 s, the last time one
+  link): Snagger fetches fresh links twice (after 5 s and 30 s, the last time one
   connection at a time) before it gives up with a plain message.
 - **Disk space**: the preview warns when a download won't fit (counting room
   to join video and audio). A video that won't fit is paused before it
@@ -87,13 +87,13 @@ checked for a file too.
 - Never overwrites a file: a second copy becomes `name (2).ext`.
 - Speed limit, retries, proxy, sign-in from your browser (Firefox, Chrome,
   Edge, Brave…) or a cookies.txt file for private or members-only videos.
-- Optional download archive: skip anything Snag has ever downloaded.
+- Optional download archive: skip anything Snagger has ever downloaded.
 
 **History** lists everything saved, searchable, with Open, Show in folder and
 Download again. **Subscriptions** follow channels and playlists and download
-only new videos, on demand or every 6 hours / daily while Snag is open.
+only new videos, on demand or every 6 hours / daily while Snagger is open.
 
-**Engine**: yt-dlp updates itself when Snag starts (stable or nightly builds),
+**Engine**: yt-dlp updates itself when Snagger starts (stable or nightly builds),
 which fixes most "this site stopped working" problems. Settings → Engine shows
 versions and can reinstall each part.
 
@@ -101,22 +101,22 @@ versions and can reinstall each part.
 
 | What | Where |
 | --- | --- |
-| Downloads | `Downloads\Snag` (change in Settings) |
-| Settings, queue, history, subscriptions | `%APPDATA%\Snag` |
-| yt-dlp, ffmpeg, Deno | `%LOCALAPPDATA%\Snag\engine` |
+| Downloads | `Downloads\Snagger` (change in Settings) |
+| Settings, queue, history, subscriptions | `%APPDATA%\Snagger` |
+| yt-dlp, ffmpeg, Deno | `%LOCALAPPDATA%\Snagger\engine` |
 
-To remove Snag, delete `Snag.exe` and those two folders.
+To remove Snagger, delete `Snagger.exe` and those two folders.
 
 ## How it works
 
-Snag is a Rust app (egui/eframe for the window). Downloading itself is done by
+Snagger is a Rust app (egui/eframe for the window). Downloading itself is done by
 [yt-dlp](https://github.com/yt-dlp/yt-dlp), the engine behind every serious
 downloader, because its 1,800 site extractors change weekly and can't be
-reimplemented. Snag installs the official standalone `yt-dlp.exe` (no Python
+reimplemented. Snagger installs the official standalone `yt-dlp.exe` (no Python
 needed), checks its SHA-256, keeps it updated, and drives it with a
 machine-readable progress format. ffmpeg comes from
 [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds). YouTube needs
-a JavaScript runtime: Snag uses Deno, or Node.js 23.5+ if it's already on the PC.
+a JavaScript runtime: Snagger uses Deno, or Node.js 23.5+ if it's already on the PC.
 
 Each download runs in its own hidden staging folder (`.snag-temp`) inside the
 download folder and inside a Windows job object, so pausing or quitting stops
@@ -133,7 +133,7 @@ pause, a quit or a dropped connection only costs the chunks in flight.
 | `src/main.rs` | Startup, single instance, `snag:` links, window |
 | `src/engine.rs` | Installing and updating yt-dlp, ffmpeg, Deno |
 | `src/ytdlp.rs` | Command lines, link previews, search, progress parsing |
-| `src/direct.rs` | Snag's own multi-connection file downloader |
+| `src/direct.rs` | Snagger's own multi-connection file downloader |
 | `src/worker.rs` | One running yt-dlp download |
 | `src/manager.rs` | The queue, saving, taskbar, keep-awake, download hours, "when done", subscription schedule |
 | `src/hub.rs` | Shared state, queue operations, automatic retries |
@@ -148,7 +148,7 @@ Needs Rust (stable) and the Visual Studio Build Tools with the Windows SDK.
 cargo build --release
 ```
 
-The app is `target\release\Snag.exe`. `cargo test` runs the unit tests.
+The app is `target\release\Snagger.exe`. `cargo test` runs the unit tests.
 
 ## Credits
 

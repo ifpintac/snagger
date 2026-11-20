@@ -12,7 +12,7 @@ use crate::util;
 pub fn start(hub: &Hub) {
     let hub = hub.clone();
     let _ = thread::Builder::new().name("clipboard".into()).spawn(move || {
-        // Whatever was on the clipboard before Snag opened is left alone.
+        // Whatever was on the clipboard before Snagger opened is left alone.
         let mut last_seq = platform::clipboard_seq();
         let mut clipboard: Option<arboard::Clipboard> = None;
         let mut last_text = String::new();

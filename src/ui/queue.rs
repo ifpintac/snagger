@@ -321,7 +321,7 @@ impl QueueUi {
                 c.when_done = wd;
                 if wd.is_power() {
                     c.toast(format!(
-                        "When the queue finishes, Snag will {} after a 1-minute warning.",
+                        "When the queue finishes, Snagger will {} after a 1-minute warning.",
                         match wd {
                             WhenDone::Sleep => "put the PC to sleep",
                             _ => "shut down the PC",
@@ -542,7 +542,7 @@ fn empty_state(ui: &mut Ui, nothing_at_all: bool) {
             ui.add_space(t.s(1));
             for line in [
                 "Paste a link above, or type words to search YouTube.",
-                "Copy a link in your browser and Snag offers to grab it.",
+                "Copy a link in your browser and Snagger offers to grab it.",
                 "Drop a text file of links on this window, or use Add many.",
             ] {
                 ui.label(widgets::muted(ui, line));
