@@ -14,6 +14,7 @@ mod manager;
 mod model;
 mod platform;
 mod settings;
+mod tools;
 mod transcript;
 mod ui;
 mod util;

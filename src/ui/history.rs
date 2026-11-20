@@ -23,6 +23,7 @@ pub struct HistoryUi {
     /// time and an excerpt.
     said: HashMap<String, (String, String)>,
     said_for: String,
+    tools: super::tools_ui::ToolsUi,
 }
 
 #[derive(Clone, Copy)]
@@ -35,6 +36,7 @@ enum Act {
     Forget,
     Transcript,
     OpenTranscript,
+    Tool(super::tools_ui::ToolKind),
 }
 
 const ROW_H: f32 = 60.0;
@@ -154,6 +156,12 @@ impl HistoryUi {
                     drop(c);
                     platform::open_url(&h.url);
                 }
+                Act::Tool(kind) => {
+                    drop(c);
+                    if let Some(media) = h.files.first() {
+                        self.tools.open(hub, media.clone(), h.title.clone(), kind, 0);
+                    }
+                }
                 Act::Transcript => {
                     drop(c);
                     if let Some(media) = h.files.first() {
@@ -191,6 +199,7 @@ impl HistoryUi {
                 }
             }
         }
+        self.tools.show(ui.ctx(), hub);
         hub.wake();
         toast
     }
@@ -285,6 +294,14 @@ fn menu_items(ui: &mut Ui, h: &HistoryItem, act: &mut Option<Act>) {
     for (icon, text, a) in items.into_iter().flatten() {
         if menu_item(ui, Some(icon), text).clicked() {
             *act = Some(a);
+        }
+    }
+    if h.files.len() == 1 && h.files[0].exists() {
+        ui.separator();
+        let mut picked = None;
+        super::tools_ui::menu(ui, &h.files[0], &mut picked);
+        if let Some(k) = picked {
+            *act = Some(Act::Tool(k));
         }
     }
 }

@@ -44,6 +44,7 @@ enum Act {
     Transcript,
     OpenTranscript,
     ChangeQuality,
+    Tool(super::tools_ui::ToolKind),
 }
 
 #[derive(Default)]
@@ -57,6 +58,7 @@ pub struct QueueUi {
     /// "Change quality" for one row: its id, the choice so far, and whether
     /// a part was already downloaded in the old quality.
     quality_edit: Option<(String, crate::model::Preset, bool)>,
+    tools: super::tools_ui::ToolsUi,
 }
 
 const ROW_H: f32 = 72.0;
@@ -419,6 +421,7 @@ impl QueueUi {
         if let Some(msg) = self.quality_dialog(ui.ctx(), hub) {
             outcome = Some(Outcome::Toast(msg));
         }
+        self.tools.show(ui.ctx(), hub);
 
         for (id, act) in acts {
             let mut c = hub.lock();
@@ -431,6 +434,15 @@ impl QueueUi {
                 Act::Top => c.move_to_top(&id),
                 Act::Bottom => c.move_to_bottom(&id),
                 Act::Log => outcome = Some(Outcome::ShowLog(id.clone())),
+                Act::Tool(kind) => {
+                    if let Some(j) = c.job(&id)
+                        && let Some(media) = j.files.first()
+                    {
+                        let (media, title, duration) = (media.clone(), j.display_title(), j.duration);
+                        drop(c);
+                        self.tools.open(hub, media, title, kind, duration);
+                    }
+                }
                 Act::ChangeQuality => {
                     if let Some(j) = c.job(&id) {
                         // Only a part on disk makes it start over.
@@ -785,12 +797,21 @@ fn row_menu(ui: &mut Ui, j: &Job, act: &mut Option<Act>) {
             item(ui, Icon::Page, "Get transcript", Act::Transcript);
         }
     }
+    let mut picked = None;
+    if j.status == Status::Done && j.files.len() == 1 {
+        ui.separator();
+        super::tools_ui::menu(ui, &j.files[0], &mut picked);
+        ui.separator();
+    }
     item(ui, Icon::Copy, "Copy link", Act::CopyLink);
     item(ui, Icon::Globe, "Open the page", Act::OpenPage);
     item(ui, Icon::Terminal, "Show log", Act::Log);
     ui.separator();
     let remove = if j.status == Status::Running { "Cancel and remove" } else { "Remove from list" };
     item(ui, Icon::Trash, remove, Act::Remove);
+    if let Some(k) = picked {
+        *act = Some(Act::Tool(k));
+    }
 }
 
 /// Status line, its colour, how full the bar is, the bar's tone, and

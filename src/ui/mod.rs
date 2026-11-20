@@ -11,6 +11,7 @@ mod setup;
 mod subs;
 pub mod theme;
 mod thumbs;
+mod tools_ui;
 mod widgets;
 
 use eframe::egui::{
@@ -359,6 +360,7 @@ impl SnagApp {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
+        let tasks = self.hub.lock().tasks.clone();
         let (running, waiting, speed, paused_queue, dir, note) = {
             let c = self.hub.lock();
             let running = c.jobs.iter().filter(|j| j.status == Status::Running).count();
@@ -381,6 +383,10 @@ impl SnagApp {
                 } else {
                     format!("{waiting} waiting")
                 });
+            }
+            if let Some(task) = tasks.first() {
+                let more = if tasks.len() > 1 { format!(" (+{} more)", tasks.len() - 1) } else { String::new() };
+                parts.push(format!("{} · {}%{more}", task.label, (task.progress * 100.0) as u32));
             }
             if parts.is_empty() {
                 parts.push("Ready".into());

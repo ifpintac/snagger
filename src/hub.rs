@@ -76,6 +76,8 @@ pub struct Core {
     pub disk_free: Option<u64>,
     /// Waiting downloads are held because the drive is nearly full.
     pub disk_hold: bool,
+    /// After-download tools at work (make smaller, GIF, split).
+    pub tasks: Vec<crate::tools::Task>,
 }
 
 impl Core {
@@ -98,6 +100,7 @@ impl Core {
             window_override: false,
             disk_free: None,
             disk_hold: false,
+            tasks: Vec::new(),
         }
     }
 
