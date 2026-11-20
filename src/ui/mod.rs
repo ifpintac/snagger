@@ -3,6 +3,9 @@
 
 mod downloads;
 mod history;
+mod icons;
+mod picker;
+mod queue;
 mod settings_tab;
 mod setup;
 mod subs;
@@ -11,10 +14,8 @@ mod thumbs;
 mod widgets;
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, Event, FontId, Id, Layout, RichText, Sense, Stroke, Ui,
-    ViewportCommand, vec2,
+    self, Align, Align2, CornerRadius, Event, FontId, Id, Label, Layout, Sense, Stroke, Ui, ViewportCommand, vec2,
 };
-use egui_phosphor::regular as icon;
 
 use crate::hub::Hub;
 use crate::manager;
@@ -23,8 +24,10 @@ use crate::platform;
 use crate::settings::ThemePref;
 use crate::util;
 
-use theme::{Pal, ScriptFonts, bold};
+use icons::Icon;
+use theme::{ScriptFonts, bold, tk};
 use thumbs::Thumbs;
+use widgets::{Button, muted};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -194,19 +197,29 @@ impl eframe::App for SnagApp {
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        widgets::track_input_mode(&ctx);
         self.handle_close(&ctx);
         self.global_paste(&ctx);
-        let fill = ui.visuals().panel_fill;
+        let t = tk(ui);
+        let fill = t.bg;
+        let side = t.s(6) as i8;
 
         egui::Panel::top("top")
-            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 10)).fill(fill))
+            .show_separator_line(false)
+            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(side, t.s(4) as i8)).fill(fill))
             .show(ui, |ui| self.top_bar(ui));
         egui::Panel::bottom("status")
-            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 6)).fill(fill))
+            .show_separator_line(false)
+            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(side, t.s(2) as i8)).fill(fill))
             .show(ui, |ui| self.status_bar(ui));
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 14, top: 4, bottom: 8 }).fill(fill))
+            .frame(
+                egui::Frame::new()
+                    .inner_margin(egui::Margin { left: side, right: side, top: t.s(2) as i8, bottom: t.s(2) as i8 })
+                    .fill(fill),
+            )
             .show(ui, |ui| {
+                self.banners(ui);
                 self.clip_offer(ui);
                 match self.tab {
                     Tab::Downloads => {
@@ -282,35 +295,28 @@ impl SnagApp {
             ));
             (active, failed, label, busy, tip)
         };
-        let pal = Pal::of(ui);
+        let t = tk(ui);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Snag").family(bold()).size(22.0));
-            ui.add_space(14.0);
+            widgets::title(ui, "Snag");
+            ui.add_space(t.s(6));
             let tabs = [
-                (Tab::Downloads, icon::TRAY_ARROW_DOWN, "Downloads"),
-                (Tab::History, icon::CLOCK_COUNTER_CLOCKWISE, "History"),
-                (Tab::Subscriptions, icon::RSS, "Subscriptions"),
-                (Tab::Settings, icon::GEAR, "Settings"),
+                (Tab::Downloads, Icon::Download, "Downloads"),
+                (Tab::History, Icon::History, "History"),
+                (Tab::Subscriptions, Icon::Feed, "Subscriptions"),
+                (Tab::Settings, Icon::Settings, "Settings"),
             ];
             for (tab, ic, name) in tabs {
-                let mut text = format!("{ic}  {name}");
-                if tab == Tab::Downloads && n_active > 0 {
-                    text.push_str(&format!("  {n_active}"));
-                }
-                let selected = self.tab == tab;
-                let rt = if selected { RichText::new(text).family(bold()) } else { RichText::new(text) };
-                let mut b = egui::Button::new(rt)
-                    .selected(selected)
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(vec2(0.0, 32.0));
-                if !selected {
-                    b = b.frame(false);
-                }
-                let r = ui.add(b);
+                let text = if tab == Tab::Downloads && n_active > 0 {
+                    format!("{name}  {n_active}")
+                } else {
+                    name.to_string()
+                };
+                let r = widgets::tab(ui, self.tab == tab, ic, &text);
                 let r = if tab == Tab::Downloads && n_failed > 0 {
-                    // A small red dot when something failed.
-                    let dot = r.rect.right_top() + vec2(-6.0, 6.0);
-                    ui.painter().circle_filled(dot, 3.5, pal.red);
+                    // A small dot when something failed (the tooltip says how many).
+                    let dot = r.rect.right_top() + vec2(-t.s(2), t.s(2));
+                    ui.painter().circle_filled(dot, 4.0, t.danger);
+                    ui.painter().circle_stroke(dot, 4.0, Stroke::new(1.5, t.bg));
                     r.on_hover_text(format!("{n_failed} failed"))
                 } else {
                     r
@@ -320,22 +326,20 @@ impl SnagApp {
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let (rect, resp) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
                 let color = if engine_busy {
-                    pal.amber
+                    t.warning_text
                 } else if engine_label == "Engine missing" {
-                    pal.red
+                    t.danger
                 } else {
-                    pal.green
+                    t.success_text
                 };
-                ui.painter().circle_filled(rect.center(), 4.0, color);
-                let _ = resp;
-                let l = ui.add(egui::Label::new(widgets::small_muted(ui, engine_label)).sense(Sense::click()));
+                widgets::dot(ui, color);
+                let l = ui.add(Label::new(muted(ui, engine_label)).sense(Sense::click()));
                 if l.on_hover_text(engine_tip).clicked() {
                     self.tab = Tab::Settings;
                 }
                 if engine_busy {
-                    ui.spinner();
+                    ui.add(egui::Spinner::new().size(t.s(4)).color(t.text2));
                 }
             });
         });
@@ -368,20 +372,19 @@ impl SnagApp {
             if parts.is_empty() {
                 parts.push("Ready".into());
             }
-            ui.label(widgets::small_muted(ui, parts.join("  ·  ")));
+            ui.label(muted(ui, parts.join("  ·  ")));
             if !note.is_empty() {
-                ui.label(widgets::small_muted(ui, format!("  ·  {}", util::ellipsize(&note, 90))));
+                ui.label(muted(ui, format!("  ·  {}", util::ellipsize(&note, 90))));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some(free) = self.free_space {
-                    ui.label(widgets::small_muted(ui, format!("{} free", util::fmt_bytes(free as f64))));
-                    ui.label(widgets::small_muted(ui, "·"));
+                    ui.label(muted(ui, format!("{} free", util::fmt_bytes(free as f64))));
+                    ui.label(muted(ui, "·"));
                 }
                 let shown = util::ellipsize(&dir.display().to_string(), 60);
-                let r = ui.add(
-                    egui::Label::new(widgets::small_muted(ui, format!("{}  {shown}", icon::FOLDER_OPEN)))
-                        .sense(Sense::click()),
-                );
+                let r = ui.add(Label::new(muted(ui, shown)).sense(Sense::click()));
+                let t = tk(ui);
+                icons::show(ui, Icon::Folder, t.s(4), t.text2);
                 if r.on_hover_text("Open the download folder").clicked() {
                     let _ = std::fs::create_dir_all(&dir);
                     platform::open_path(&dir);
@@ -390,42 +393,100 @@ impl SnagApp {
         });
     }
 
+    /// Shown on every tab: a pending sleep/shut-down, and downloads waiting
+    /// for the download hours.
+    fn banners(&mut self, ui: &mut Ui) {
+        let (power, waiting_until) = {
+            let c = self.hub.lock();
+            let waiting = c.jobs.iter().any(|j| j.status == Status::Queued);
+            let blocked = !c.window_override && !c.settings.in_window(crate::settings::local_minute());
+            (c.power_at, (waiting && blocked).then_some(c.settings.window_start))
+        };
+        let t = tk(ui);
+        if let Some((what, at)) = power {
+            let left = at.saturating_sub(util::now());
+            let mut cancel = false;
+            widgets::banner(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    icons::show(ui, Icon::Power, t.icon_size, t.warning_text);
+                    let verb = if what == crate::hub::WhenDone::Sleep { "go to sleep" } else { "shut down" };
+                    ui.label(widgets::strong(ui, format!("Downloads finished. The PC will {verb} in {left} s.")));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if Button::primary("Keep the PC on").show(ui).clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            });
+            ui.add_space(t.s(4));
+            if cancel {
+                self.hub.lock().power_at = None;
+            }
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        if let Some(start) = waiting_until {
+            let mut now = false;
+            ui.horizontal(|ui| {
+                icons::show(ui, Icon::Clock, t.icon_size, t.text2);
+                ui.label(muted(
+                    ui,
+                    format!(
+                        "Downloads wait until {} (download hours in Settings).",
+                        crate::settings::fmt_minute(start)
+                    ),
+                ));
+                if Button::quiet("Start now anyway").show(ui).clicked() {
+                    now = true;
+                }
+            });
+            ui.add_space(t.s(2));
+            if now {
+                self.hub.lock().window_override = true;
+                self.hub.wake();
+            }
+        }
+    }
+
     /// "You copied a link" bar, shown on every tab.
     fn clip_offer(&mut self, ui: &mut Ui) {
         let offer = self.hub.lock().clip_offer.clone();
         if offer.is_empty() {
             return;
         }
-        let pal = Pal::of(ui);
+        let t = tk(ui);
         let mut act = 0;
-        egui::Frame::new()
-            .fill(if pal.dark { Color32::from_rgb(28, 44, 70) } else { Color32::from_rgb(232, 240, 254) })
-            .corner_radius(CornerRadius::same(8))
-            .inner_margin(egui::Margin::symmetric(12, 8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(icon::CLIPBOARD_TEXT).size(18.0).color(pal.accent));
-                    let text = if offer.len() == 1 {
-                        format!("You copied a link: {}", util::short_url(&offer[0]))
-                    } else {
-                        format!("You copied {} links", offer.len())
-                    };
-                    ui.add(egui::Label::new(text).truncate());
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if widgets::icon_button(ui, icon::X, "Dismiss").clicked() {
-                            act = 3;
-                        }
-                        if ui.button("Download").on_hover_text("Add to the queue with your default quality").clicked() {
-                            act = 2;
-                        }
-                        if offer.len() == 1 && ui.button("Preview").clicked() {
-                            act = 1;
-                        }
+        widgets::banner(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                icons::show(ui, Icon::Paste, t.icon_size, t.text2);
+                let text = if offer.len() == 1 {
+                    format!("You copied a link: {}", util::short_url(&offer[0]))
+                } else {
+                    format!("You copied {} links", offer.len())
+                };
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::icon_button(ui, Icon::Close, "Dismiss").clicked() {
+                        act = 3;
+                    }
+                    if Button::secondary("Download")
+                        .icon(Icon::Download)
+                        .tip("Add to the queue with your default quality")
+                        .show(ui)
+                        .clicked()
+                    {
+                        act = 2;
+                    }
+                    if offer.len() == 1 && Button::secondary("Preview").icon(Icon::Eye).show(ui).clicked() {
+                        act = 1;
+                    }
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.add(Label::new(widgets::strong(ui, text)).truncate());
                     });
                 });
             });
-        ui.add_space(8.0);
+        });
+        ui.add_space(t.s(4));
         if act != 0 {
             let links = std::mem::take(&mut self.hub.lock().clip_offer);
             match act {
@@ -487,6 +548,7 @@ impl SnagApp {
         };
         let frame = ctx.cumulative_frame_nr();
         let first_frame = *self.confirm_since.get_or_insert(frame) == frame;
+        let destructive = !matches!(which, Confirm::Quit(_));
         let (title, body, ok) = match which {
             Confirm::ClearHistory => (
                 "Clear history?".to_string(),
@@ -514,17 +576,19 @@ impl SnagApp {
             ),
         };
         let mut decided: Option<bool> = None;
-        let modal = egui::Modal::new(Id::new("confirm")).show(ctx, |ui| {
-            ui.set_width(380.0);
+        let modal = egui::Modal::new(Id::new("confirm")).frame(widgets::dialog_frame(ctx)).show(ctx, |ui| {
+            let t = tk(ui);
+            ui.set_width(400.0);
             widgets::heading(ui, &title);
-            ui.add_space(4.0);
-            ui.label(body);
-            ui.add_space(12.0);
+            ui.add_space(t.s(2));
+            widgets::para(ui, body);
+            ui.add_space(t.s(6));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if widgets::primary_button(ui, ok, true).clicked() {
+                let b = if destructive { Button::danger(ok) } else { Button::primary(ok) };
+                if b.show(ui).clicked() {
                     decided = Some(true);
                 }
-                if ui.button("Cancel").clicked() {
+                if widgets::button(ui, "Cancel").clicked() {
                     decided = Some(false);
                 }
             });
@@ -570,17 +634,17 @@ impl SnagApp {
             }
         };
         let mut open = true;
-        egui::Window::new(format!("{}  Log", icon::TERMINAL_WINDOW))
+        egui::Window::new(egui::RichText::new("Log").family(bold()))
             .id(Id::new("log-window"))
             .open(&mut open)
             .default_size(vec2(720.0, 420.0))
             .resizable(true)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.label(RichText::new(&title).family(bold()));
-                ui.label(widgets::small_muted(ui, &url));
+                ui.label(widgets::strong(ui, &title));
+                ui.label(muted(ui, &url));
                 ui.horizontal(|ui| {
-                    if ui.button(format!("{}  Copy log", icon::COPY)).clicked() {
+                    if Button::secondary("Copy log").icon(Icon::Copy).show(ui).clicked() {
                         self.hub.lock().clip_ignore = lines.clone();
                         ui.ctx().copy_text(format!("{title}\n{url}\n\n{lines}"));
                     }
@@ -592,7 +656,7 @@ impl SnagApp {
                     } else {
                         lines.clone()
                     };
-                    ui.add(egui::Label::new(RichText::new(text).monospace()).wrap());
+                    ui.add(egui::Label::new(egui::RichText::new(text).monospace()).wrap());
                 });
             });
         if !open {
@@ -611,17 +675,19 @@ impl SnagApp {
             .order(egui::Order::Foreground)
             .interactable(false)
             .show(ctx, |ui| {
+                let t = tk(ui);
                 for (msg, _) in &self.toasts {
-                    let pal = Pal::of(ui);
                     egui::Frame::new()
-                        .fill(if pal.dark { Color32::from_gray(48) } else { Color32::from_gray(36) })
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(14, 9))
+                        .fill(t.surface)
+                        .stroke(Stroke::new(1.0, t.border))
+                        .shadow(t.shadow_overlay)
+                        .corner_radius(CornerRadius::same(t.r_md as u8))
+                        .inner_margin(egui::Margin::symmetric(t.padx as i8, t.s(3) as i8))
                         .show(ui, |ui| {
                             ui.set_max_width(380.0);
-                            ui.label(RichText::new(msg).color(Color32::WHITE));
+                            ui.add(Label::new(egui::RichText::new(msg).color(t.text)).wrap());
                         });
-                    ui.add_space(6.0);
+                    ui.add_space(t.s(2));
                 }
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
@@ -631,21 +697,23 @@ impl SnagApp {
         if ctx.input(|i| i.raw.hovered_files.is_empty()) {
             return;
         }
+        let t = theme::tk_ctx(ctx);
         let rect = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("drop")));
-        painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(150));
+        painter.rect_filled(rect, CornerRadius::ZERO, t.bg.gamma_multiply(0.94));
         painter.rect_stroke(
-            rect.shrink(12.0),
-            CornerRadius::same(12),
-            Stroke::new(2.0, Color32::WHITE),
+            rect.shrink(t.s(4)),
+            CornerRadius::same(t.r_lg as u8),
+            Stroke::new(2.0, t.accent),
             egui::StrokeKind::Inside,
         );
+        icons::paint_at(&painter, Icon::Download, rect.center() - vec2(0.0, t.s(8)), t.icon_size * 2.0, t.text2);
         painter.text(
-            rect.center(),
+            rect.center() + vec2(0.0, t.s(2)),
             Align2::CENTER_CENTER,
-            format!("{}  Drop to add the links in this file", icon::TRAY_ARROW_DOWN),
-            FontId::new(20.0, bold()),
-            Color32::WHITE,
+            "Drop to add the links in this file",
+            FontId::new(t.fs_xl, bold()),
+            t.text,
         );
     }
 }

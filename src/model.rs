@@ -200,6 +200,8 @@ pub struct JobOptions {
     /// Set for subscription checks: only fetch what isn't in the archive yet.
     pub sub_id: String,
     pub break_on_existing: bool,
+    /// A plain file link, downloaded by Snag's own engine instead of yt-dlp.
+    pub direct: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -300,6 +302,9 @@ pub struct Job {
     pub items_done: u32,
     pub items_failed: u32,
     pub bytes: u64,
+    /// Automatic retries after connection problems, and when the next one is due.
+    pub auto_retries: u32,
+    pub retry_at: u64,
     #[serde(skip)]
     pub live: Live,
     #[serde(skip)]
@@ -344,6 +349,13 @@ impl Job {
         self.live = Live::default();
         self.control = None;
         self.finished = 0;
+        self.auto_retries = 0;
+        self.retry_at = 0;
+    }
+
+    /// Waiting for an automatic retry that isn't due yet.
+    pub fn retry_pending(&self, now: u64) -> bool {
+        self.status == Status::Queued && self.retry_at > now
     }
 }
 

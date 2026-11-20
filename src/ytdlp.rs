@@ -133,6 +133,70 @@ pub fn output_template(job: &Job, s: &Settings, staging: &Path) -> String {
     format!("{sub}{org}{playlist}{base}{clip}.%(ext)s")
 }
 
+/// What a download would be called with these settings, for the preview in
+/// Settings. Mirrors `output_template` with a well-known example video.
+pub fn sample_name(s: &Settings, playlist: bool) -> String {
+    let org = match s.organize {
+        Organize::None => "",
+        Organize::BySite => "youtube.com\\",
+        Organize::ByUploader => "jawed\\",
+    };
+    let pl = if playlist { "My playlist\\001 - " } else { "" };
+    let base = match s.name_style {
+        NameStyle::TitleId => "Me at the zoo [jNQXAC9IVRw]".to_string(),
+        NameStyle::Title => "Me at the zoo".to_string(),
+        NameStyle::UploaderTitle => "jawed - Me at the zoo".to_string(),
+        NameStyle::DateTitle => "2005-04-24 - Me at the zoo".to_string(),
+        NameStyle::Custom => {
+            let t = s.custom_template.trim().trim_end_matches(".%(ext)s");
+            if t.is_empty() { "Me at the zoo [jNQXAC9IVRw]".to_string() } else { fill_sample(t) }
+        }
+    };
+    let ext = if s.preset.quality.is_audio() {
+        match s.preset.audio.ytdlp() {
+            "best" => "m4a",
+            other => other,
+        }
+    } else {
+        match s.preset.video {
+            VideoFormat::Mkv => "mkv",
+            VideoFormat::Mp4 | VideoFormat::Original => "mp4",
+        }
+    };
+    let name = format!("{org}{pl}{base}.{ext}");
+    if s.restrict_names { name.replace(' ', "_") } else { name }
+}
+
+/// Fills the common fields of a custom template with the example video.
+fn fill_sample(t: &str) -> String {
+    let fields = [
+        ("title", "Me at the zoo"),
+        ("id", "jNQXAC9IVRw"),
+        ("uploader", "jawed"),
+        ("channel", "jawed"),
+        ("upload_date", "20050424"),
+        ("playlist_title", "My playlist"),
+        ("playlist_index", "1"),
+        ("webpage_url_domain", "youtube.com"),
+        ("extractor", "youtube"),
+    ];
+    let mut out = String::new();
+    let mut rest = t;
+    while let Some(start) = rest.find("%(") {
+        out.push_str(&rest[..start]);
+        let Some(close) = rest[start..].find(')') else { break };
+        let inner = &rest[start + 2..start + close];
+        let name = inner.split(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or("");
+        out.push_str(fields.iter().find(|(f, _)| *f == name).map_or("…", |(_, v)| v));
+        let after = &rest[start + close + 1..];
+        // Skip the conversion letter (and any width) after the brackets.
+        let skip = after.find(|c: char| c.is_ascii_alphabetic()).map_or(0, |i| i + 1);
+        rest = &after[skip..];
+    }
+    out.push_str(rest);
+    out.replace('/', "\\")
+}
+
 pub fn download_args(job: &Job, s: &Settings, p: &EnginePaths, staging: &Path, archive: &Path) -> Vec<OsString> {
     let mut a: Vec<OsString> = Vec::new();
     common_args(s, p, &mut a);
@@ -168,6 +232,12 @@ pub fn download_args(job: &Job, s: &Settings, p: &EnginePaths, staging: &Path, a
     }
     if !job.opts.items.trim().is_empty() {
         push(&mut a, &["--playlist-items", job.opts.items.trim()]);
+    }
+    // Downloading a whole playlist or channel flat out gets you blocked
+    // ("HTTP Error 429"); a short pause between videos avoids that.
+    let many = job.opts.playlist == PlaylistMode::Whole || !job.opts.sub_id.is_empty() || job.n_items > 1;
+    if s.gentle_playlists && many {
+        push(&mut a, &["--sleep-requests", "0.75", "--sleep-interval", "2", "--max-sleep-interval", "6"]);
     }
 
     // Quality and format.
@@ -299,11 +369,48 @@ pub fn phase_label(postprocessor: &str) -> &'static str {
 // Preview: what's behind a link
 // --------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+/// One video in a playlist, a channel or a search.
+#[derive(Clone, Debug, Default)]
 pub struct Entry {
     pub index: u32,
     pub title: String,
     pub duration: u64,
+    pub url: String,
+    pub uploader: String,
+    pub views: Option<u64>,
+    pub thumb: String,
+}
+
+impl Entry {
+    fn from_flat(e: &Value, index: u32) -> Entry {
+        let s = |keys: &[&str]| {
+            keys.iter().find_map(|k| e[*k].as_str().filter(|v| !v.is_empty()).map(str::to_string)).unwrap_or_default()
+        };
+        Entry {
+            index: e["playlist_index"].as_u64().map(|n| n as u32).unwrap_or(index),
+            title: s(&["title", "id", "url"]),
+            duration: e["duration"].as_f64().unwrap_or(0.0) as u64,
+            url: s(&["webpage_url", "url"]),
+            uploader: s(&["channel", "uploader", "uploader_id"]),
+            views: e["view_count"].as_u64(),
+            thumb: small_thumb(e),
+        }
+    }
+}
+
+/// A list-sized thumbnail (yt-dlp lists them smallest first).
+fn small_thumb(e: &Value) -> String {
+    let list: Vec<&Value> = e["thumbnails"]
+        .as_array()
+        .map(|l| l.iter().filter(|t| t["url"].as_str().is_some_and(|u| u.starts_with("http"))).collect())
+        .unwrap_or_default();
+    list.iter()
+        .find(|t| t["width"].as_u64().is_some_and(|w| w >= 200))
+        .or(list.last())
+        .and_then(|t| t["url"].as_str())
+        .or_else(|| e["thumbnail"].as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -351,7 +458,62 @@ pub fn probe(
     }
     args.push("--".into());
     args.push(url.into());
+    let info = run_json(paths, s, args, ctl)?;
+    Ok(read_probe(&info, url, s))
+}
 
+/// Where a search runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SearchSite {
+    #[default]
+    YouTube,
+    SoundCloud,
+}
+
+impl SearchSite {
+    pub const ALL: [SearchSite; 2] = [SearchSite::YouTube, SearchSite::SoundCloud];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SearchSite::YouTube => "YouTube",
+            SearchSite::SoundCloud => "SoundCloud",
+        }
+    }
+
+    fn prefix(self) -> &'static str {
+        match self {
+            SearchSite::YouTube => "ytsearch",
+            SearchSite::SoundCloud => "scsearch",
+        }
+    }
+}
+
+/// The top `count` results for `query`.
+pub fn search(
+    paths: &EnginePaths,
+    s: &Settings,
+    query: &str,
+    site: SearchSite,
+    count: u32,
+    ctl: &Arc<Control>,
+) -> Result<Vec<Entry>, String> {
+    let mut args: Vec<OsString> = Vec::new();
+    common_args(s, paths, &mut args);
+    push(&mut args, &["-J", "--flat-playlist", "--no-warnings", "--"]);
+    args.push(format!("{}{count}:{}", site.prefix(), query.trim()).into());
+    let info = run_json(paths, s, args, ctl)?;
+    let entries = info["entries"].as_array().cloned().unwrap_or_default();
+    Ok(entries
+        .iter()
+        .filter(|e| !e.is_null())
+        .enumerate()
+        .map(|(i, e)| Entry::from_flat(e, i as u32 + 1))
+        .filter(|e| e.url.starts_with("http"))
+        .collect())
+}
+
+/// Runs yt-dlp with `-J`-style arguments and parses what it prints.
+fn run_json(paths: &EnginePaths, s: &Settings, args: Vec<OsString>, ctl: &Arc<Control>) -> Result<Value, String> {
     let mut cmd = command(paths);
     cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child =
@@ -403,9 +565,7 @@ pub fn probe(
             err.lines().rev().find(|l| l.starts_with("ERROR")).unwrap_or_else(|| err.lines().last().unwrap_or(""));
         return Err(util::friendly_error(line, &s.cookies_browser));
     }
-    let info: Value =
-        serde_json::from_slice(&out).map_err(|_| "yt-dlp returned something Snag couldn't read.".to_string())?;
-    Ok(read_probe(&info, url, s))
+    serde_json::from_slice(&out).map_err(|_| "yt-dlp returned something Snag couldn't read.".to_string())
 }
 
 fn read_probe(info: &Value, url: &str, s: &Settings) -> Probe {
@@ -427,11 +587,7 @@ fn read_probe(info: &Value, url: &str, s: &Settings) -> Probe {
             if e.is_null() {
                 continue;
             }
-            entries.push(Entry {
-                index: e["playlist_index"].as_u64().map(|n| n as u32).unwrap_or(i as u32 + 1),
-                title: str_of(e, &["title", "id", "url"]),
-                duration: e["duration"].as_f64().unwrap_or(0.0) as u64,
-            });
+            entries.push(Entry::from_flat(e, i as u32 + 1));
         }
     }
     let duration = if is_playlist { 0 } else { info["duration"].as_f64().unwrap_or(0.0) as u64 };
@@ -588,11 +744,18 @@ fn quality_choices(info: &Value, duration: u64) -> (Vec<Choice>, bool, u32) {
         note.push_str(&format!("{}", fps.round() as u32));
     }
     choices.push(Choice { quality: Quality::Best, note, size, size_mp4 });
+    // A rung is offered when it downloads something different from the
+    // rung above. Widescreen films (2048×858) have no exact 720 or 480, but
+    // "Up to 720p" still picks their 1280×536 stream, as yt-dlp's res sort does.
+    let mut last_res = res;
     for rung in [2160u32, 1440, 1080, 720, 480, 360] {
-        if top > 0 && rung < top && resolutions.iter().any(|&r| r.abs_diff(rung) <= rung / 10) {
-            let (size, _, _) = estimate(Some(rung), false);
-            let (size_mp4, _, _) = estimate(Some(rung), true);
-            choices.push(Choice { quality: Quality::Max(rung), note: String::new(), size, size_mp4 });
+        if top > 0 && rung < top {
+            let (size, picked, _) = estimate(Some(rung), false);
+            if picked > 0 && picked != last_res {
+                let (size_mp4, _, _) = estimate(Some(rung), true);
+                choices.push(Choice { quality: Quality::Max(rung), note: String::new(), size, size_mp4 });
+                last_res = picked;
+            }
         }
         if choices.len() == 5 {
             break;
@@ -692,6 +855,20 @@ mod tests {
             rest = &after[spec_len..];
         }
         out + rest.len()
+    }
+
+    #[test]
+    fn widescreen_films_get_a_full_quality_list() {
+        let f = |w: u32, h: u32, tbr: f64| serde_json::json!({"width": w, "height": h, "vcodec": "avc1", "acodec": "none", "tbr": tbr});
+        let info = serde_json::json!({"formats": [
+            f(640, 268, 300.0), f(854, 358, 600.0), f(1280, 536, 1500.0), f(2048, 858, 4000.0),
+            {"vcodec": "none", "acodec": "mp4a", "abr": 128.0, "tbr": 128.0},
+        ]});
+        let (choices, audio_only, top) = quality_choices(&info, 600);
+        let qs: Vec<Quality> = choices.iter().map(|c| c.quality).collect();
+        assert!(!audio_only);
+        assert_eq!(top, 858);
+        assert_eq!(qs, vec![Quality::Best, Quality::Max(720), Quality::Max(480), Quality::Audio]);
     }
 
     #[test]

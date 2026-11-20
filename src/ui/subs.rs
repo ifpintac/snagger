@@ -4,14 +4,14 @@
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
-use eframe::egui::{self, Align, Label, Layout, RichText, Sense, Ui, UiBuilder, vec2};
-use egui_phosphor::regular as icon;
+use eframe::egui::{self, Align, Label, Layout, Sense, Ui, UiBuilder, vec2};
 
 use super::Confirm;
 use super::downloads::preset_picker;
-use super::theme::{Pal, bold};
+use super::icons::{self, Icon};
+use super::theme::tk;
 use super::thumbs::Thumbs;
-use super::widgets::{self, icon_button, small_muted};
+use super::widgets::{self, Button, icon_button, menu_item, muted};
 use crate::hub::Hub;
 use crate::model::{Preset, SubState, Subscription};
 use crate::platform;
@@ -145,50 +145,52 @@ impl SubsUi {
     }
 
     pub fn show(&mut self, ui: &mut Ui, hub: &Hub, thumbs: &mut Thumbs, confirm: &mut Option<Confirm>) {
-        let pal = Pal::of(ui);
-        widgets::heading(ui, "Subscriptions");
-        ui.label(small_muted(
+        let t = tk(ui);
+        widgets::title(ui, "Subscriptions");
+        widgets::hint(
             ui,
             "Follow a channel or playlist and Snag downloads each new video into its own folder. It checks while Snag is open.",
-        ));
-        ui.add_space(8.0);
+        );
+        ui.add_space(t.s(4));
 
         let default_preset = hub.lock().settings.preset;
         self.preset.get_or_insert(default_preset);
-        widgets::card(ui).show(ui, |ui| {
+        widgets::card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                let w = (ui.available_width() - 110.0).max(200.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.url)
-                        .hint_text(format!(
-                            "{}  Channel or playlist link, e.g. https://www.youtube.com/@channel",
-                            icon::RSS
-                        ))
-                        .desired_width(w)
-                        .margin(vec2(10.0, 7.0)),
-                );
+                let w = (ui.available_width() - 130.0).max(200.0);
+                let edit = egui::TextEdit::singleline(&mut self.url)
+                    .hint_text("Channel or playlist link, e.g. https://www.youtube.com/@channel");
+                widgets::input(ui, edit, Some(Icon::Feed), w);
                 let busy = self.adding.is_some();
                 let url = util::parse_single_link(&self.url);
-                if busy {
-                    ui.spinner();
-                } else if widgets::primary_button(ui, "Follow", url.is_some()).clicked()
+                if Button::primary("Follow")
+                    .icon(Icon::Plus)
+                    .enabled(url.is_some())
+                    .loading(busy)
+                    .min_width(112.0)
+                    .show(ui)
+                    .clicked()
                     && let Some(u) = url
                 {
                     let p = self.preset.unwrap_or(default_preset);
                     self.follow(hub, u, p);
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(t.s(3));
             if let Some(p) = self.preset.as_mut() {
                 preset_picker(ui, "sub", p);
             }
-            ui.checkbox(&mut self.only_new, "Only new videos from now on (skip what's already there)");
+            ui.add_space(t.s(1));
+            widgets::checkbox(ui, &mut self.only_new, "Only new videos from now on (skip what's already there)");
             if !self.error.is_empty() {
-                ui.label(RichText::new(&self.error).color(pal.red));
+                ui.horizontal_wrapped(|ui| {
+                    icons::show(ui, Icon::Alert, t.icon_size, t.danger_text);
+                    ui.label(widgets::colored(ui, &self.error, t.danger_text));
+                });
             }
         });
-        ui.add_space(8.0);
+        ui.add_space(t.s(6));
 
         let mut acts: Vec<(String, Act)> = Vec::new();
         let mut check_all = false;
@@ -196,7 +198,7 @@ impl SubsUi {
         {
             let c = hub.lock();
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Following {}", c.subs.len())).family(bold()));
+                widgets::heading(ui, &format!("Following {}", c.subs.len()));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let mut interval = c.settings.sub_check;
                     egui::ComboBox::from_id_salt("sub-interval")
@@ -205,26 +207,28 @@ impl SubsUi {
                             SubCheck::Every6h => "Every 6 hours",
                             SubCheck::Daily => "Once a day",
                         })
+                        .width(150.0)
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut interval, SubCheck::Daily, "Once a day");
                             ui.selectable_value(&mut interval, SubCheck::Every6h, "Every 6 hours");
                             ui.selectable_value(&mut interval, SubCheck::Off, "Only when I ask");
                         });
-                    ui.label(small_muted(ui, "Check"));
+                    ui.label(widgets::field_label(ui, "Check"));
                     if interval != c.settings.sub_check {
                         new_interval = Some(interval);
                     }
-                    if !c.subs.is_empty() && ui.button(format!("{}  Check all now", icon::ARROWS_CLOCKWISE)).clicked() {
+                    if !c.subs.is_empty() && Button::secondary("Check all now").icon(Icon::Refresh).show(ui).clicked() {
                         check_all = true;
                     }
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(t.s(2));
             if c.subs.is_empty() {
-                ui.add_space(30.0);
+                ui.add_space(t.s(8));
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new(icon::RSS).size(40.0).color(pal.muted));
-                    ui.label(small_muted(ui, "Nothing followed yet."));
+                    icons::show(ui, Icon::Feed, t.icon_size * 2.0, t.text2);
+                    ui.add_space(t.s(2));
+                    ui.label(muted(ui, "Nothing followed yet."));
                 });
             } else {
                 let checking: Vec<String> = c
@@ -297,22 +301,28 @@ impl SubsUi {
 }
 
 fn sub_row(ui: &mut Ui, s: &Subscription, busy: bool, thumbs: &mut Thumbs, dir: &std::path::Path) -> Option<Act> {
-    let pal = Pal::of(ui);
+    let t = tk(ui);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect.shrink2(vec2(0.0, 2.0)), 8, pal.card_hover);
+    let bg = rect.shrink2(vec2(t.s(1) + 2.0, 3.0));
+    let hover = ui.ctx().animate_bool_with_time(
+        resp.id.with("hover"),
+        resp.hovered(),
+        if super::theme::reduced_motion() { 0.0 } else { t.dur_fast },
+    );
+    if hover > 0.0 {
+        widgets::raised_faded(ui.painter(), bg, t.r_md, t.surface, hover, t);
     }
-    let inner = rect.shrink2(vec2(8.0, 6.0));
+    let inner = bg.shrink2(vec2(t.s(3), t.s(1)));
     let mut row = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
     let tex = thumbs.get(&s.thumb);
-    widgets::thumb(&mut row, tex.as_ref(), vec2(86.0, 48.0), icon::RSS);
-    row.add_space(10.0);
+    widgets::thumb(&mut row, tex.as_ref(), vec2(86.0, 48.0), Icon::Feed);
+    row.add_space(t.s(3));
     let mut act = None;
-    let text_w = (row.available_width() - 4.0 * 32.0).max(60.0);
+    let text_w = (row.available_width() - 3.0 * (t.ctrl + t.s(1)) - t.s(2)).max(60.0);
     row.allocate_ui_with_layout(vec2(text_w, inner.height()), Layout::top_down(Align::Min), |ui| {
         ui.set_width(text_w);
-        ui.spacing_mut().item_spacing.y = 3.0;
-        ui.add(Label::new(RichText::new(&s.title).family(bold()).size(14.5)).truncate());
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.add(Label::new(widgets::strong(ui, &s.title)).truncate());
         let status = if s.state == SubState::Preparing {
             "Getting the current video list…".to_string()
         } else if busy {
@@ -329,39 +339,41 @@ fn sub_row(ui: &mut Ui, s: &Subscription, busy: bool, thumbs: &mut Thumbs, dir: 
                 s.total_new
             )
         };
-        let color = if !s.error.is_empty() && !busy { pal.red } else { pal.muted };
+        let color = if !s.error.is_empty() && !busy { t.danger_text } else { t.text2 };
         let mut meta = vec![s.preset.label(), format!("→ {}", dir.join(&s.folder).display())];
         if !s.auto {
             meta.push("auto-check off".into());
         }
-        ui.add(Label::new(small_muted(ui, meta.join("  ·  "))).truncate());
-        ui.add(Label::new(RichText::new(status).size(12.5).color(color)).truncate()).on_hover_text(&s.url);
+        ui.add(Label::new(widgets::caption(ui, meta.join("  ·  "))).truncate());
+        ui.add(Label::new(widgets::caption(ui, status).color(color)).truncate()).on_hover_text(&s.url);
     });
     row.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let menu = ui.menu_button(RichText::new(icon::DOTS_THREE_VERTICAL).size(17.0), |ui| {
+        ui.spacing_mut().item_spacing.x = t.s(1);
+        widgets::more_menu(ui, |ui| {
             let auto = if s.auto { "Stop checking automatically" } else { "Check automatically" };
-            for (text, a) in [
-                (format!("{}  {auto}", icon::CLOCK_COUNTER_CLOCKWISE), Act::ToggleAuto),
-                (format!("{}  Copy link", icon::COPY), Act::Copy),
-                (format!("{}  Open the page", icon::ARROW_SQUARE_OUT), Act::Page),
-                (format!("{}  Unfollow", icon::TRASH), Act::Remove),
+            for (icon, text, a) in [
+                (Icon::Clock, auto, Act::ToggleAuto),
+                (Icon::Copy, "Copy link", Act::Copy),
+                (Icon::Globe, "Open the page", Act::Page),
+                (Icon::Trash, "Unfollow", Act::Remove),
             ] {
-                if ui.button(text).clicked() {
+                if menu_item(ui, Some(icon), text).clicked() {
                     act = Some(a);
-                    ui.close();
                 }
             }
         });
-        menu.response.on_hover_text("More");
-        if icon_button(ui, icon::FOLDER_OPEN, "Open its folder").clicked() {
+        if icon_button(ui, Icon::Folder, "Open its folder").clicked() {
             act = Some(Act::Folder);
         }
         let can_check = !busy && s.state == SubState::Idle;
-        if can_check && icon_button(ui, icon::ARROWS_CLOCKWISE, "Check for new videos now").clicked() {
-            act = Some(Act::Check);
-        }
-        if !can_check {
-            ui.spinner();
+        if can_check {
+            if icon_button(ui, Icon::Refresh, "Check for new videos now").clicked() {
+                act = Some(Act::Check);
+            }
+        } else {
+            let (r, _) = ui.allocate_exact_size(vec2(t.ctrl, t.ctrl), Sense::hover());
+            let spin = egui::Rect::from_center_size(r.center(), vec2(t.icon_size, t.icon_size));
+            egui::Spinner::new().size(t.icon_size).color(t.text2).paint_at(ui, spin);
         }
     });
     act

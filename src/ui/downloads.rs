@@ -1,36 +1,30 @@
-//! The Downloads tab: the link box, the preview card, "Add many" and the queue.
+//! The Downloads tab: the link box (a link, or words to search for), the
+//! preview card (a video, a playlist, search results or a plain file),
+//! "Add many", and the queue below.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
-use eframe::egui::{self, Align, Event, FontId, Id, Key, Label, Layout, RichText, Sense, Ui, UiBuilder, vec2};
-use egui_phosphor::regular as icon;
+use eframe::egui::{self, Align, Event, Id, Key, Label, Layout, Ui, vec2};
 
-use super::theme::{Pal, bold};
+use super::icons::{self, Icon};
+use super::picker::Picker;
+use super::queue::QueueUi;
+use super::theme::tk;
 use super::thumbs::Thumbs;
-use super::widgets::{self, chip, icon_button, small_muted};
+use super::widgets::{self, Button, chip, icon_button, muted};
+use crate::direct;
 use crate::hub::Hub;
-use crate::model::{
-    AudioFormat, Control, Job, JobOptions, PlaylistMode, Preset, Quality, STOP_CANCEL, Stage, Status, VideoFormat,
-};
+use crate::model::{AudioFormat, Control, Job, JobOptions, PlaylistMode, Preset, Quality, STOP_CANCEL, VideoFormat};
 use crate::platform;
 use crate::util;
-use crate::ytdlp::{self, Probe};
+use crate::ytdlp::{self, Entry, Probe, SearchSite};
 
 pub enum Outcome {
     ShowLog(String),
     Toast(String),
-}
-
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum Filter {
-    #[default]
-    All,
-    Active,
-    Done,
-    Failed,
 }
 
 #[derive(Default)]
@@ -39,20 +33,34 @@ pub struct DownloadsUi {
     focus_link: bool,
     look: Option<Look>,
     batch: Option<Batch>,
-    filter: Filter,
+    queue: QueueUi,
+    /// Search results to go back to after previewing one of them.
+    back: Option<Box<Results>>,
+    site: SearchSite,
 }
 
+/// Whatever is being looked at above the queue.
 struct Look {
-    url: String,
+    /// The link, or the search words.
+    what: String,
+    search: Option<(SearchSite, u32)>,
     ctl: Arc<Control>,
-    rx: Option<Receiver<Result<Probe, String>>>,
+    rx: Option<Receiver<Result<Found, String>>>,
     state: LookState,
 }
 
+enum Found {
+    Media(Probe),
+    Results(Vec<Entry>),
+    File(direct::Probe),
+}
+
 enum LookState {
-    Loading,
+    Loading(String),
     Failed(String),
     Ready(Box<Preview>),
+    Results(Box<Results>),
+    File(Box<direct::Probe>),
 }
 
 struct Preview {
@@ -65,8 +73,16 @@ struct Preview {
     clip: bool,
     clip_from: String,
     clip_to: String,
-    picked: Vec<bool>,
+    picker: Picker,
     already: Option<(u64, Option<PathBuf>)>,
+}
+
+struct Results {
+    query: String,
+    site: SearchSite,
+    count: u32,
+    picker: Picker,
+    preset: Preset,
 }
 
 struct Batch {
@@ -78,24 +94,6 @@ struct Batch {
     /// The click that opens the dialog must not also close it.
     opened: Option<u64>,
 }
-
-#[derive(Clone, Copy)]
-enum Act {
-    Pause,
-    Resume,
-    Cancel,
-    Redo,
-    Remove,
-    Top,
-    Bottom,
-    Open,
-    Reveal,
-    CopyLink,
-    OpenPage,
-    Log,
-}
-
-const ROW_H: f32 = 78.0;
 
 impl DownloadsUi {
     // -- getting links in -----------------------------------------------------
@@ -114,12 +112,14 @@ impl DownloadsUi {
             1 => {
                 let url = links.into_iter().next().unwrap_or_default();
                 self.link = url.clone();
+                self.back = None;
                 self.start_look(hub, url, PlaylistMode::Auto);
             }
             _ => self.open_batch(hub, links.join("\n")),
         }
     }
 
+    /// A link (or several) gets a preview; anything else is a search.
     fn receive_text(&mut self, hub: &Hub, text: &str) {
         let links = util::extract_links(text);
         if !links.is_empty() {
@@ -127,17 +127,20 @@ impl DownloadsUi {
         } else if let Some(one) = util::parse_single_link(text) {
             self.receive_links(hub, vec![one]);
         } else if !text.trim().is_empty() {
-            self.fail_look(
-                text.trim(),
-                "That doesn't look like a link. Copy the address of the video page and paste it here.",
-            );
+            let site = self.site;
+            self.start_search(hub, text.trim().to_string(), site, 30);
         }
     }
 
-    fn fail_look(&mut self, url: &str, msg: &str) {
+    fn fail_look(&mut self, what: &str, msg: &str) {
         self.cancel_look();
-        self.look =
-            Some(Look { url: url.into(), ctl: Hub::new_control(), rx: None, state: LookState::Failed(msg.into()) });
+        self.look = Some(Look {
+            what: what.into(),
+            search: None,
+            ctl: Hub::new_control(),
+            rx: None,
+            state: LookState::Failed(msg.into()),
+        });
     }
 
     fn cancel_look(&mut self) {
@@ -152,43 +155,116 @@ impl DownloadsUi {
             let c = hub.lock();
             (c.engine.paths(), c.settings.clone())
         };
-        let Some(paths) = paths else {
+        let file_first = util::file_like_url(&url);
+        if paths.is_none() && !file_first {
             self.fail_look(&url, "Snag is still setting up its download engine. Try again in a moment.");
             return;
-        };
+        }
         let ctl = Hub::new_control();
         let (tx, rx) = mpsc::channel();
         let (u, c2, h) = (url.clone(), ctl.clone(), hub.clone());
         thread::spawn(move || {
-            let r = ytdlp::probe(&paths, &settings, &u, mode, &c2);
+            let probe_media = || match &paths {
+                Some(p) => ytdlp::probe(p, &settings, &u, mode, &c2).map(Found::Media),
+                None => Err("Snag is still setting up its download engine. Try again in a moment.".into()),
+            };
+            let r = if file_first {
+                // Looks like a file (…/plans.zip): Snag's own engine, unless it's really a page.
+                match direct::inspect(&u) {
+                    Ok(f) if !f.is_page() => Ok(Found::File(f)),
+                    _ => probe_media(),
+                }
+            } else {
+                match probe_media() {
+                    // yt-dlp doesn't know the site: maybe it's a plain file link.
+                    Err(e) if e.starts_with("Snag can't find a video") => match direct::inspect(&u) {
+                        Ok(f) if !f.is_page() => Ok(Found::File(f)),
+                        _ => Err(e),
+                    },
+                    other => other,
+                }
+            };
             let _ = tx.send(r);
             h.repaint();
         });
-        self.look = Some(Look { url, ctl, rx: Some(rx), state: LookState::Loading });
+        self.look = Some(Look {
+            what: url,
+            search: None,
+            ctl,
+            rx: Some(rx),
+            state: LookState::Loading("Reading the link…".into()),
+        });
+    }
+
+    fn start_search(&mut self, hub: &Hub, query: String, site: SearchSite, count: u32) {
+        self.cancel_look();
+        self.back = None;
+        self.site = site;
+        let (paths, settings) = {
+            let c = hub.lock();
+            (c.engine.paths(), c.settings.clone())
+        };
+        let Some(paths) = paths else {
+            self.fail_look(&query, "Snag is still setting up its download engine. Try again in a moment.");
+            return;
+        };
+        self.link = query.clone();
+        let ctl = Hub::new_control();
+        let (tx, rx) = mpsc::channel();
+        let (q, c2, h) = (query.clone(), ctl.clone(), hub.clone());
+        thread::spawn(move || {
+            let _ = tx.send(ytdlp::search(&paths, &settings, &q, site, count, &c2).map(Found::Results));
+            h.repaint();
+        });
+        self.look = Some(Look {
+            what: query,
+            search: Some((site, count)),
+            ctl,
+            rx: Some(rx),
+            state: LookState::Loading(format!("Searching {}…", site.label())),
+        });
     }
 
     pub fn poll(&mut self, hub: &Hub) -> Option<String> {
         let look = self.look.as_mut()?;
         let rx = look.rx.as_ref()?;
         match rx.try_recv() {
-            Ok(Ok(p)) => {
+            Ok(Ok(found)) => {
                 look.rx = None;
                 let c = hub.lock();
                 let want = c.settings.preset;
-                let already = c.already_downloaded(&p.vid, &p.url).map(|h| (h.finished, h.target()));
-                let quality = pick_quality(&p, want.quality);
-                look.state = LookState::Ready(Box::new(Preview {
-                    picked: vec![true; p.entries.len()],
-                    initial: Preset { quality, ..want },
-                    quality,
-                    video: want.video,
-                    audio: want.audio,
-                    clip: false,
-                    clip_from: String::new(),
-                    clip_to: String::new(),
-                    already,
-                    p,
-                }));
+                look.state = match found {
+                    Found::Media(p) => {
+                        let already = c.already_downloaded(&p.vid, &p.url).map(|h| (h.finished, h.target()));
+                        let quality = pick_quality(&p, want.quality);
+                        LookState::Ready(Box::new(Preview {
+                            picker: Picker::new(p.entries.clone(), true),
+                            initial: Preset { quality, ..want },
+                            quality,
+                            video: want.video,
+                            audio: want.audio,
+                            clip: false,
+                            clip_from: String::new(),
+                            clip_to: String::new(),
+                            already,
+                            p,
+                        }))
+                    }
+                    Found::Results(entries) if entries.is_empty() => {
+                        LookState::Failed(format!("No results for “{}”. Try other words.", look.what))
+                    }
+                    Found::Results(entries) => {
+                        let (site, count) = look.search.unwrap_or_default();
+                        LookState::Results(Box::new(Results {
+                            query: look.what.clone(),
+                            site,
+                            count,
+                            picker: Picker::new(entries, false),
+                            preset: want,
+                        }))
+                    }
+                    Found::File(f) => LookState::File(Box::new(f)),
+                };
             }
             Ok(Err(e)) => {
                 look.rx = None;
@@ -215,6 +291,10 @@ impl DownloadsUi {
                     .chain(std::iter::once(pv.p.uploader.as_str()))
                     .chain(pv.p.entries.iter().take(500).map(|e| e.title.as_str())),
             ),
+            Some(LookState::Results(r)) => {
+                Box::new(r.picker.entries.iter().flat_map(|e| [e.title.as_str(), e.uploader.as_str()]))
+            }
+            Some(LookState::File(f)) => Box::new(std::iter::once(f.name.as_str())),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -259,37 +339,34 @@ impl DownloadsUi {
     // -- drawing ----------------------------------------------------------------
 
     pub fn show(&mut self, ui: &mut Ui, hub: &Hub, thumbs: &mut Thumbs) -> Option<Outcome> {
+        let t = tk(ui);
         self.link_bar(ui, hub);
-        ui.add_space(10.0);
+        ui.add_space(t.s(4));
         let warnings: Vec<&str> = {
             let c = hub.lock();
             if c.engine.ready && c.engine.busy.is_none() { c.engine.warnings() } else { Vec::new() }
         };
         if !warnings.is_empty() {
-            let pal = Pal::of(ui);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(icon::WARNING).color(pal.amber));
-                ui.label(RichText::new(warnings.join(" ")).color(pal.amber).size(13.0));
-                if ui.link("Install what's missing").clicked() {
+                icons::show(ui, Icon::Warning, t.icon_size, t.warning_text);
+                ui.label(widgets::colored(ui, warnings.join(" "), t.warning_text));
+                if Button::quiet("Install what's missing").show(ui).clicked() {
                     crate::engine::install_missing(hub);
                 }
             });
-            ui.add_space(6.0);
+            ui.add_space(t.s(2));
         }
         let a = self.look_card(ui, hub, thumbs);
-        let b = self.queue(ui, hub, thumbs);
+        let b = self.queue.show(ui, hub, thumbs);
         a.or(b)
     }
 
     fn link_bar(&mut self, ui: &mut Ui, hub: &Hub) {
         ui.horizontal(|ui| {
-            let w = (ui.available_width() - 316.0).max(220.0);
+            let w = (ui.available_width() - 372.0).max(220.0);
             let edit = egui::TextEdit::singleline(&mut self.link)
-                .hint_text(format!("{}   Paste a link to a video, playlist or channel", icon::LINK))
-                .desired_width(w)
-                .margin(vec2(10.0, 8.0))
-                .font(FontId::proportional(15.0));
-            let resp = ui.add(edit);
+                .hint_text(format!("Paste a link, or type to search {}", self.site.label()));
+            let resp = widgets::input(ui, edit, Some(Icon::Link), w);
             if std::mem::take(&mut self.focus_link) {
                 resp.request_focus();
             }
@@ -299,25 +376,27 @@ impl DownloadsUi {
                 let text = std::mem::take(&mut self.link);
                 self.receive_text(hub, &text);
             }
-            let big = vec2(0.0, 34.0);
-            if ui
-                .add(egui::Button::new(format!("{}  Paste", icon::CLIPBOARD)).min_size(big))
-                .on_hover_text("Paste a link from the clipboard (or press Ctrl+V anywhere)")
+            if Button::secondary("Paste")
+                .icon(Icon::Paste)
+                .tip("Paste a link from the clipboard (or press Ctrl+V anywhere)")
+                .show(ui)
                 .clicked()
             {
                 let text = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
                 self.receive_text(hub, &text);
             }
-            if ui
-                .add(egui::Button::new(format!("{}  Add many", icon::LIST_PLUS)).min_size(big))
-                .on_hover_text("Paste a whole list of links at once")
+            if Button::secondary("Add many")
+                .icon(Icon::AddMany)
+                .tip("Paste a whole list of links at once")
+                .show(ui)
                 .clicked()
             {
                 self.open_batch(hub, String::new());
             }
-            if ui
-                .add(egui::Button::new(format!("{}  Import", icon::FILE_TEXT)).min_size(big))
-                .on_hover_text("Add every link in a text file, bookmark export or web page")
+            if Button::secondary("Import")
+                .icon(Icon::Import)
+                .tip("Add every link in a text file, bookmark export or web page")
+                .show(ui)
                 .clicked()
             {
                 self.import_file(hub);
@@ -327,21 +406,25 @@ impl DownloadsUi {
 
     fn look_card(&mut self, ui: &mut Ui, hub: &Hub, thumbs: &mut Thumbs) -> Option<Outcome> {
         let look = self.look.as_mut()?;
+        let t = tk(ui);
         let mut close = false;
         let mut retry: Option<(String, PlaylistMode)> = None;
         let mut download = false;
+        let mut search: Option<(String, SearchSite, u32)> = None;
+        let mut preview_entry: Option<String> = None;
+        let mut back = false;
+        let has_back = self.back.is_some();
         let download_dir = hub.lock().settings.download_dir.clone();
-        widgets::card(ui).show(ui, |ui| {
+        widgets::card(ui, |ui| {
             ui.set_width(ui.available_width());
-            let pal = Pal::of(ui);
             match &mut look.state {
-                LookState::Loading => {
+                LookState::Loading(msg) => {
                     ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Reading the link…");
-                        ui.add(Label::new(small_muted(ui, util::short_url(&look.url))).truncate());
+                        ui.add(egui::Spinner::new().size(t.icon_size).color(t.text2));
+                        ui.label(widgets::strong(ui, msg.as_str()));
+                        ui.add(Label::new(muted(ui, util::short_url(&look.what))).truncate());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button("Cancel").clicked() {
+                            if widgets::button(ui, "Cancel").clicked() {
                                 close = true;
                             }
                         });
@@ -349,36 +432,83 @@ impl DownloadsUi {
                 }
                 LookState::Failed(msg) => {
                     ui.horizontal_top(|ui| {
-                        ui.label(RichText::new(icon::WARNING_CIRCLE).size(20.0).color(pal.red));
+                        icons::show(ui, Icon::Alert, t.icon_size, t.danger_text);
                         ui.vertical(|ui| {
-                            ui.set_width(ui.available_width() - 40.0);
-                            ui.add(Label::new(msg.as_str()).wrap());
-                            ui.add(Label::new(small_muted(ui, util::short_url(&look.url))).truncate());
+                            ui.set_width(ui.available_width() - t.ctrl - t.s(2));
+                            ui.add(Label::new(widgets::strong(ui, msg.as_str())).wrap());
+                            ui.add(Label::new(muted(ui, util::short_url(&look.what))).truncate());
+                            ui.add_space(t.s(2));
                             ui.horizontal(|ui| {
-                                if look.url.starts_with("http") && ui.button("Try again").clicked() {
-                                    retry = Some((look.url.clone(), PlaylistMode::Auto));
+                                if Button::secondary("Try again").icon(Icon::Refresh).show(ui).clicked() {
+                                    match look.search {
+                                        Some((site, count)) => search = Some((look.what.clone(), site, count)),
+                                        None => retry = Some((look.what.clone(), PlaylistMode::Auto)),
+                                    }
                                 }
-                                if util::video_in_playlist(&look.url) && ui.button("Try the whole playlist").clicked() {
-                                    let pl = util::playlist_url_of(&look.url).unwrap_or(look.url.clone());
+                                if util::video_in_playlist(&look.what)
+                                    && Button::secondary("Try the whole playlist")
+                                        .icon(Icon::Playlist)
+                                        .show(ui)
+                                        .clicked()
+                                {
+                                    let pl = util::playlist_url_of(&look.what).unwrap_or(look.what.clone());
                                     retry = Some((pl, PlaylistMode::Whole));
                                 }
                             });
                         });
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                            if icon_button(ui, icon::X, "Close").clicked() {
+                            if icon_button(ui, Icon::Close, "Close").clicked() {
                                 close = true;
                             }
                         });
                     });
                 }
                 LookState::Ready(pv) => {
-                    preview_body(ui, pv, &look.url, thumbs, &download_dir, &mut close, &mut download, &mut retry);
+                    if has_back && Button::quiet("Back to the results").icon(Icon::Back).show(ui).clicked() {
+                        back = true;
+                    }
+                    preview_body(ui, pv, &look.what, thumbs, &download_dir, &mut close, &mut download, &mut retry);
+                }
+                LookState::Results(r) => {
+                    let act = results_body(ui, r, thumbs, &download_dir);
+                    match act {
+                        ResultsAct::None => {}
+                        ResultsAct::Close => close = true,
+                        ResultsAct::Download => download = true,
+                        ResultsAct::Search(site, count) => search = Some((r.query.clone(), site, count)),
+                        ResultsAct::Preview(i) => preview_entry = Some(r.picker.entries[i].url.clone()),
+                    }
+                }
+                LookState::File(f) => {
+                    file_body(ui, f, &look.what, &download_dir, &mut close, &mut download);
                 }
             }
         });
-        ui.add_space(12.0);
+        ui.add_space(t.s(5));
+
+        if let Some(url) = preview_entry {
+            if let Some(Look { state: LookState::Results(r), .. }) = self.look.take() {
+                self.back = Some(r);
+            }
+            self.link = url.clone();
+            self.start_look(hub, url, PlaylistMode::Single);
+            return None;
+        }
+        if let Some((q, site, count)) = search {
+            self.start_search(hub, q, site, count);
+            return None;
+        }
+        if back
+            || (close
+                && self.back.is_some()
+                && matches!(self.look.as_ref().map(|l| &l.state), Some(LookState::Ready(_))))
+        {
+            self.restore_results();
+            return None;
+        }
         if close {
             self.cancel_look();
+            self.back = None;
             self.link.clear();
         }
         if let Some((url, mode)) = retry {
@@ -386,16 +516,34 @@ impl DownloadsUi {
             self.start_look(hub, url, mode);
         }
         if download {
-            return self.download_preview(hub);
+            return match self.look.as_ref().map(|l| &l.state) {
+                Some(LookState::Results(_)) => self.download_results(hub),
+                Some(LookState::File(_)) => self.download_file(hub),
+                _ => self.download_preview(hub),
+            };
         }
         None
+    }
+
+    fn restore_results(&mut self) {
+        self.cancel_look();
+        if let Some(r) = self.back.take() {
+            self.link = r.query.clone();
+            self.look = Some(Look {
+                what: r.query.clone(),
+                search: Some((r.site, r.count)),
+                ctl: Hub::new_control(),
+                rx: None,
+                state: LookState::Results(r),
+            });
+        }
     }
 
     fn download_preview(&mut self, hub: &Hub) -> Option<Outcome> {
         let look = self.look.take()?;
         let LookState::Ready(pv) = look.state else { return None };
         let p = &pv.p;
-        let picked: Vec<u32> = p.entries.iter().zip(&pv.picked).filter(|(_, on)| **on).map(|(e, _)| e.index).collect();
+        let picked: Vec<u32> = pv.picker.selected().iter().map(|&i| pv.picker.entries[i].index).collect();
         let items = if p.is_playlist && picked.len() < p.entries.len() { ranges(&picked) } else { String::new() };
         let clip =
             if pv.clip && !p.is_playlist { clip_range(&pv.clip_from, &pv.clip_to, p.duration).ok() } else { None };
@@ -440,8 +588,62 @@ impl DownloadsUi {
         }
         hub.wake();
         self.link.clear();
-        self.focus_link = true;
+        if self.back.is_some() {
+            self.restore_results();
+        } else {
+            self.focus_link = true;
+        }
         Some(Outcome::Toast(format!("Downloading “{}”", util::ellipsize(&title, 60))))
+    }
+
+    fn download_results(&mut self, hub: &Hub) -> Option<Outcome> {
+        let look = self.look.as_mut()?;
+        let LookState::Results(r) = &mut look.state else { return None };
+        let picked = r.picker.selected();
+        let opts = JobOptions { preset: r.preset, playlist: PlaylistMode::Single, ..Default::default() };
+        let mut added = 0;
+        {
+            let mut c = hub.lock();
+            for &i in &picked {
+                let e = &r.picker.entries[i];
+                if c.is_queued(&e.url) {
+                    continue;
+                }
+                let mut job = Job::new(&e.url, opts.clone());
+                job.title = e.title.clone();
+                job.thumb = e.thumb.clone();
+                job.uploader = e.uploader.clone();
+                job.duration = e.duration;
+                job.site = r.site.label().to_string();
+                c.add_job(job);
+                added += 1;
+            }
+        }
+        // Untick them, so the next picks start fresh.
+        picked.iter().for_each(|&i| r.picker.picked[i] = false);
+        hub.wake();
+        Some(Outcome::Toast(match added {
+            0 => "Those are already in the queue".to_string(),
+            1 => "Downloading 1 video".to_string(),
+            n => format!("Downloading {n} videos"),
+        }))
+    }
+
+    fn download_file(&mut self, hub: &Hub) -> Option<Outcome> {
+        let look = self.look.take()?;
+        let LookState::File(f) = look.state else { return None };
+        let mut job = Job::new(&look.what, JobOptions { direct: true, ..Default::default() });
+        job.title = f.name.clone();
+        job.site = util::host_of(&look.what);
+        {
+            let mut c = hub.lock();
+            let id = c.add_job(job);
+            c.move_to_top(&id);
+        }
+        hub.wake();
+        self.link.clear();
+        self.focus_link = true;
+        Some(Outcome::Toast(format!("Downloading “{}”", util::ellipsize(&f.name, 60))))
     }
 
     // -- add many -----------------------------------------------------------------
@@ -458,49 +660,58 @@ impl DownloadsUi {
             let c = hub.lock();
             b.links.iter().filter(|l| c.is_queued(l)).count()
         };
+        let files = b.links.iter().filter(|l| util::file_like_url(l)).count();
         let mut add = false;
         let mut cancel = false;
         let mut import = false;
-        let modal = egui::Modal::new(Id::new("batch")).show(ctx, |ui| {
+        let modal = egui::Modal::new(Id::new("batch")).frame(widgets::dialog_frame(ctx)).show(ctx, |ui| {
+            let t = tk(ui);
             ui.set_width(640.0);
-            widgets::heading(ui, &format!("{}  Add many links", icon::LIST_PLUS));
-            ui.label(small_muted(
+            widgets::icon_heading(ui, Icon::AddMany, "Add many links");
+            ui.add_space(t.s(1));
+            widgets::hint(
                 ui,
                 "Paste links below: one per line, or any text that contains them (a list, a chat, a web page). Duplicates are skipped.",
-            ));
-            ui.add_space(6.0);
-            egui::ScrollArea::vertical().max_height(260.0).id_salt("batch-text").show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut b.text)
-                        .desired_rows(12)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace)
-                        .hint_text("https://www.youtube.com/watch?v=…\nhttps://www.tiktok.com/@…/video/…\nhttps://vimeo.com/…"),
-                );
-            });
-            ui.add_space(4.0);
+            );
+            ui.add_space(t.s(3));
+            let edit = egui::TextEdit::multiline(&mut b.text)
+                .font(egui::TextStyle::Monospace)
+                .hint_text("https://www.youtube.com/watch?v=…\nhttps://www.tiktok.com/@…/video/…\nhttps://vimeo.com/…");
+            let w = ui.available_width();
+            let area = widgets::text_area(ui, edit, vec2(w, 240.0), "batch-text");
+            if first_frame {
+                area.request_focus();
+            }
+            ui.add_space(t.s(2));
             let found = match b.links.len() {
                 0 => "No links yet".to_string(),
                 1 => "1 link found".to_string(),
                 n => format!("{n} links found"),
             };
-            let extra = if queued > 0 { format!(" · {queued} already in the queue (skipped)") } else { String::new() };
-            ui.label(RichText::new(format!("{found}{extra}")).family(bold()));
-            ui.add_space(8.0);
+            let mut extra = String::new();
+            if files > 0 {
+                extra.push_str(&format!(" · {files} plain file{} (Snag's own engine)", if files == 1 { "" } else { "s" }));
+            }
+            if queued > 0 {
+                extra.push_str(&format!(" · {queued} already in the queue (skipped)"));
+            }
+            ui.label(widgets::strong(ui, format!("{found}{extra}")));
+            ui.add_space(t.s(3));
             preset_picker(ui, "batch", &mut b.preset);
-            ui.checkbox(&mut b.whole, "When a link is a video inside a playlist, download the whole playlist");
-            ui.add_space(10.0);
+            ui.add_space(t.s(1));
+            widgets::checkbox(ui, &mut b.whole, "When a link is a video inside a playlist, download the whole playlist");
+            ui.add_space(t.s(5));
             ui.horizontal(|ui| {
-                if ui.button(format!("{}  Import from file…", icon::FILE_TEXT)).clicked() {
+                if Button::secondary("Import from file…").icon(Icon::Import).show(ui).clicked() {
                     import = true;
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let n = b.links.len().saturating_sub(queued);
                     let label = if n == 1 { "Add 1 link".to_string() } else { format!("Add {n} links") };
-                    if widgets::primary_button(ui, &label, n > 0).clicked() {
+                    if Button::primary(&label).icon(Icon::Plus).enabled(n > 0).show(ui).clicked() {
                         add = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if widgets::button(ui, "Cancel").clicked() {
                         cancel = true;
                     }
                 });
@@ -530,7 +741,14 @@ impl DownloadsUi {
             };
             {
                 let mut c = hub.lock();
-                let (added, skipped) = c.add_links(&b.links, &opts);
+                // Plain file links go to Snag's own engine, the rest to yt-dlp.
+                let (file_links, media): (Vec<String>, Vec<String>) =
+                    b.links.iter().cloned().partition(|l| util::file_like_url(l));
+                let (mut added, mut skipped) = c.add_links(&media, &opts);
+                let file_opts = JobOptions { direct: true, ..Default::default() };
+                let (fa, fs) = c.add_links(&file_links, &file_opts);
+                added += fa;
+                skipped += fs;
                 if c.settings.batch_playlists != b.whole {
                     c.settings.batch_playlists = b.whole;
                     c.dirty.settings = true;
@@ -548,250 +766,6 @@ impl DownloadsUi {
             self.batch = None;
         }
     }
-
-    // -- the queue ------------------------------------------------------------------
-
-    fn queue(&mut self, ui: &mut Ui, hub: &Hub, thumbs: &mut Thumbs) -> Option<Outcome> {
-        let mut acts: Vec<(String, Act)> = Vec::new();
-        let mut header: Option<&'static str> = None;
-        let mut parallel_change: Option<u32> = None;
-        {
-            let c = hub.lock();
-            let count = |f: &dyn Fn(Status) -> bool| c.jobs.iter().filter(|j| f(j.status)).count();
-            let running = count(&|s| s == Status::Running);
-            let waiting = count(&|s| s == Status::Queued);
-            let paused = count(&|s| s == Status::Paused);
-            let done = count(&|s| s == Status::Done || s == Status::Cancelled);
-            let failed = count(&|s| s == Status::Failed);
-            let partial = c.jobs.iter().filter(|j| j.status == Status::Done && j.items_failed > 0).count();
-
-            ui.horizontal(|ui| {
-                widgets::heading(ui, "Queue");
-                let mut parts = Vec::new();
-                if running > 0 {
-                    parts.push(format!("{running} downloading"));
-                }
-                if waiting > 0 {
-                    parts.push(format!("{waiting} waiting"));
-                }
-                if paused > 0 {
-                    parts.push(format!("{paused} paused"));
-                }
-                if done > 0 {
-                    parts.push(format!("{done} finished"));
-                }
-                if failed > 0 {
-                    parts.push(format!("{failed} failed"));
-                }
-                ui.label(small_muted(ui, parts.join(" · ")));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if self.filter == Filter::Failed {
-                        if failed > 0 && ui.button(format!("{}  Clear failed", icon::BROOM)).clicked() {
-                            header = Some("clear-failed");
-                        }
-                    } else if done > 0 && ui.button(format!("{}  Clear finished", icon::BROOM)).clicked() {
-                        header = Some("clear");
-                    }
-                    if failed + partial > 0
-                        && ui
-                            .button(format!("{}  Retry failed", icon::ARROW_CLOCKWISE))
-                            .on_hover_text("Try every failed download again")
-                            .clicked()
-                    {
-                        header = Some("retry");
-                    }
-                    if c.queue_paused || paused > 0 {
-                        if ui.button(format!("{}  Resume all", icon::PLAY)).clicked() {
-                            header = Some("resume");
-                        }
-                    } else if running + waiting > 0 && ui.button(format!("{}  Pause all", icon::PAUSE)).clicked() {
-                        header = Some("pause");
-                    }
-                });
-            });
-
-            ui.horizontal(|ui| {
-                for (f, label, n) in [
-                    (Filter::All, "All", c.jobs.len()),
-                    (Filter::Active, "In progress", running + waiting + paused),
-                    (Filter::Done, "Finished", done),
-                    (Filter::Failed, "Failed", failed),
-                ] {
-                    let note = if n > 0 { n.to_string() } else { String::new() };
-                    if chip(ui, self.filter == f, label, &note).clicked() {
-                        self.filter = f;
-                    }
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let mut p = c.settings.parallel;
-                    if ui
-                        .add_enabled(p < 10, egui::Button::new(icon::PLUS).small())
-                        .on_hover_text("More at once")
-                        .clicked()
-                    {
-                        p += 1;
-                    }
-                    ui.label(RichText::new(p.to_string()).family(bold()));
-                    if ui
-                        .add_enabled(p > 1, egui::Button::new(icon::MINUS).small())
-                        .on_hover_text("Fewer at once")
-                        .clicked()
-                    {
-                        p -= 1;
-                    }
-                    ui.label(small_muted(ui, "At once"));
-                    if p != c.settings.parallel {
-                        parallel_change = Some(p);
-                    }
-                });
-            });
-            ui.add_space(4.0);
-
-            let mut idx: Vec<usize> = (0..c.jobs.len())
-                .filter(|&i| {
-                    let s = c.jobs[i].status;
-                    match self.filter {
-                        Filter::All => true,
-                        Filter::Active => s.is_active() || s == Status::Paused,
-                        Filter::Done => s == Status::Done || s == Status::Cancelled,
-                        Filter::Failed => s == Status::Failed || (s == Status::Done && c.jobs[i].items_failed > 0),
-                    }
-                })
-                .collect();
-            idx.sort_by_key(|&i| {
-                let j = &c.jobs[i];
-                let rank = match j.status {
-                    Status::Running => 0,
-                    Status::Queued => 1,
-                    Status::Paused => 2,
-                    Status::Failed => 3,
-                    Status::Done | Status::Cancelled => 4,
-                };
-                (rank, if rank >= 3 { u64::MAX - j.finished } else { i as u64 })
-            });
-
-            if idx.is_empty() {
-                empty_state(ui, c.jobs.is_empty());
-            } else {
-                let queue_paused = c.queue_paused;
-                egui::ScrollArea::vertical().id_salt("queue").auto_shrink([false, false]).show_rows(
-                    ui,
-                    ROW_H,
-                    idx.len(),
-                    |ui, range| {
-                        for i in range {
-                            let j = &c.jobs[idx[i]];
-                            if let Some(a) = job_row(ui, j, thumbs, queue_paused) {
-                                acts.push((j.id.clone(), a));
-                            }
-                        }
-                    },
-                );
-            }
-        }
-
-        let mut outcome = None;
-        if let Some(p) = parallel_change {
-            let mut c = hub.lock();
-            c.settings.parallel = p;
-            c.dirty.settings = true;
-        }
-        if let Some(h) = header {
-            let mut c = hub.lock();
-            match h {
-                "clear" => c.clear_finished(),
-                "clear-failed" => c.clear_failed(),
-                "retry" => {
-                    let n = c.retry_failed();
-                    outcome = Some(Outcome::Toast(format!("Retrying {n} download{}", if n == 1 { "" } else { "s" })));
-                }
-                "resume" => c.resume_all(),
-                "pause" => c.pause_all(),
-                _ => {}
-            }
-        }
-        for (id, act) in acts {
-            let mut c = hub.lock();
-            match act {
-                Act::Pause => c.pause(&id),
-                Act::Resume => c.resume(&id),
-                Act::Cancel => c.cancel(&id),
-                Act::Redo => c.redo(&id),
-                Act::Remove => c.remove(&id),
-                Act::Top => c.move_to_top(&id),
-                Act::Bottom => c.move_to_bottom(&id),
-                Act::Log => outcome = Some(Outcome::ShowLog(id.clone())),
-                Act::CopyLink | Act::OpenPage | Act::Open | Act::Reveal => {
-                    let Some(j) = c.job(&id) else { continue };
-                    let url = j.url.clone();
-                    let files = j.files.clone();
-                    let folder = j.folder.clone();
-                    match act {
-                        Act::CopyLink => {
-                            c.clip_ignore = url.clone();
-                            ui.ctx().copy_text(url);
-                            outcome = Some(Outcome::Toast("Link copied".into()));
-                        }
-                        Act::OpenPage => {
-                            drop(c);
-                            platform::open_url(&url);
-                        }
-                        _ => {
-                            drop(c);
-                            if let Some(msg) = open_result(act, &files, folder.as_deref()) {
-                                outcome = Some(Outcome::Toast(msg));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        hub.wake();
-        outcome
-    }
-}
-
-/// Opens or reveals a finished download. Returns a message when it can't.
-fn open_result(act: Act, files: &[PathBuf], folder: Option<&std::path::Path>) -> Option<String> {
-    let existing: Vec<&PathBuf> = files.iter().filter(|f| f.exists()).collect();
-    if existing.is_empty() && folder.is_none_or(|f| !f.exists()) {
-        return Some("That file has been moved or deleted.".into());
-    }
-    match act {
-        Act::Open if existing.len() == 1 && files.len() == 1 => {
-            platform::open_path(existing[0]);
-        }
-        Act::Reveal if files.len() == 1 && !existing.is_empty() => platform::reveal(existing[0]),
-        _ => match folder.filter(|f| f.exists()) {
-            Some(f) => {
-                platform::open_path(f);
-            }
-            None => platform::reveal(existing[0]),
-        },
-    }
-    None
-}
-
-fn empty_state(ui: &mut Ui, nothing_at_all: bool) {
-    ui.add_space(40.0);
-    ui.vertical_centered(|ui| {
-        let pal = Pal::of(ui);
-        ui.label(RichText::new(icon::TRAY_ARROW_DOWN).size(42.0).color(pal.muted));
-        ui.add_space(6.0);
-        if nothing_at_all {
-            ui.label(RichText::new("Nothing downloading yet").family(bold()).size(16.0));
-            ui.add_space(2.0);
-            for line in [
-                "Paste a link above, or press Ctrl+V anywhere in Snag.",
-                "Copy a link in your browser and Snag offers to grab it.",
-                "Drop a text file of links on this window, or use Add many.",
-            ] {
-                ui.label(small_muted(ui, line));
-            }
-        } else {
-            ui.label(small_muted(ui, "Nothing in this list."));
-        }
-    });
 }
 
 fn pick_quality(p: &Probe, want: Quality) -> Quality {
@@ -851,8 +825,9 @@ fn clip_range(from: &str, to: &str, duration: u64) -> Result<(f64, f64), &'stati
 }
 
 pub fn preset_picker(ui: &mut Ui, id: &str, preset: &mut Preset) {
+    let t = tk(ui);
     ui.horizontal(|ui| {
-        ui.label("Quality");
+        ui.label(widgets::field_label(ui, "Quality"));
         egui::ComboBox::from_id_salt(format!("{id}-q"))
             .selected_text(preset.quality.long_label())
             .width(170.0)
@@ -861,9 +836,9 @@ pub fn preset_picker(ui: &mut Ui, id: &str, preset: &mut Preset) {
                     ui.selectable_value(&mut preset.quality, q, q.long_label());
                 }
             });
-        ui.add_space(8.0);
+        ui.add_space(t.s(3));
+        ui.label(widgets::field_label(ui, "Format"));
         if preset.quality.is_audio() {
-            ui.label("Format");
             egui::ComboBox::from_id_salt(format!("{id}-a")).selected_text(preset.audio.label()).width(120.0).show_ui(
                 ui,
                 |ui| {
@@ -873,7 +848,6 @@ pub fn preset_picker(ui: &mut Ui, id: &str, preset: &mut Preset) {
                 },
             );
         } else {
-            ui.label("Format");
             egui::ComboBox::from_id_salt(format!("{id}-v")).selected_text(preset.video.label()).width(120.0).show_ui(
                 ui,
                 |ui| {
@@ -884,6 +858,28 @@ pub fn preset_picker(ui: &mut Ui, id: &str, preset: &mut Preset) {
             );
         }
     });
+}
+
+/// "Saves to …" on the left, the primary action on the right.
+fn footer(ui: &mut Ui, download_dir: &std::path::Path, label: &str, icon: Option<Icon>, enabled: bool) -> bool {
+    let t = tk(ui);
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 230.0).max(80.0);
+        ui.allocate_ui_with_layout(vec2(w, t.ctrl), Layout::left_to_right(Align::Center), |ui| {
+            ui.set_max_width(w);
+            icons::show(ui, Icon::Folder, t.icon_size, t.text2);
+            ui.add(Label::new(muted(ui, format!("Saves to {}", download_dir.display()))).truncate());
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let mut b = Button::primary(label).enabled(enabled).min_width(140.0);
+            if let Some(i) = icon {
+                b = b.icon(i);
+            }
+            clicked = b.show(ui).clicked();
+        });
+    });
+    clicked
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -897,22 +893,22 @@ fn preview_body(
     download: &mut bool,
     retry: &mut Option<(String, PlaylistMode)>,
 ) {
-    let pal = Pal::of(ui);
+    let t = tk(ui);
     let p = &pv.p;
     ui.horizontal_top(|ui| {
         let tex = thumbs.get(&p.thumb);
         let placeholder = if p.is_playlist {
-            icon::PLAYLIST
+            Icon::Playlist
         } else if p.audio_only {
-            icon::MUSIC_NOTES
+            Icon::Music
         } else {
-            icon::FILM_STRIP
+            Icon::Video
         };
         widgets::thumb(ui, tex.as_ref(), vec2(192.0, 108.0), placeholder);
-        ui.add_space(6.0);
+        ui.add_space(t.s(2));
         ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 40.0).max(100.0));
-            ui.add(Label::new(RichText::new(&p.title).family(bold()).size(16.5)).wrap());
+            ui.set_width((ui.available_width() - t.ctrl - t.s(2)).max(100.0));
+            ui.add(Label::new(widgets::heading_text(ui, &p.title)).wrap());
             let mut meta = Vec::new();
             if p.is_playlist {
                 meta.push(format!("Playlist · {} video{}", p.count, if p.count == 1 { "" } else { "s" }));
@@ -926,30 +922,32 @@ fn preview_body(
             if !p.site.is_empty() {
                 meta.push(p.site.clone());
             }
-            ui.label(small_muted(ui, meta.join("  ·  ")));
+            ui.label(muted(ui, meta.join("  ·  ")));
             if p.is_live {
-                ui.label(
-                    RichText::new("Live now: Snag records from this moment until the stream ends or you stop it.")
-                        .color(pal.amber),
-                );
+                ui.horizontal_wrapped(|ui| {
+                    icons::show(ui, Icon::Info, t.icon_size, t.warning_text);
+                    ui.label(widgets::colored(
+                        ui,
+                        "Live now: Snag records from this moment until the stream ends or you stop it.",
+                        t.warning_text,
+                    ));
+                });
             }
             if let Some((when, target)) = &pv.already {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{}  Downloaded {}", icon::CHECK_CIRCLE, util::fmt_ago(*when)))
-                            .color(pal.green),
-                    );
-                    if let Some(t) = target
-                        && ui.link("Show it").clicked()
+                    icons::show(ui, Icon::Done, t.icon_size, t.success_text);
+                    ui.label(widgets::colored(ui, format!("Downloaded {}", util::fmt_ago(*when)), t.success_text));
+                    if let Some(tg) = target
+                        && Button::quiet("Show it").show(ui).clicked()
                     {
-                        platform::reveal(t);
+                        platform::reveal(tg);
                     }
                 });
             }
             if !p.is_playlist && util::video_in_playlist(url) {
                 ui.horizontal(|ui| {
-                    ui.label(small_muted(ui, "This video is part of a playlist."));
-                    if ui.link("Get the whole playlist").clicked() {
+                    ui.label(muted(ui, "This video is part of a playlist."));
+                    if Button::quiet("Get the whole playlist").show(ui).clicked() {
                         let pl = util::playlist_url_of(url).unwrap_or_else(|| url.to_string());
                         *retry = Some((pl, PlaylistMode::Whole));
                     }
@@ -957,15 +955,17 @@ fn preview_body(
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-            if icon_button(ui, icon::X, "Close").clicked() {
+            if icon_button(ui, Icon::Close, "Close").clicked() {
                 *close = true;
             }
         });
     });
 
-    ui.add_space(10.0);
-    ui.label(small_muted(ui, "Quality"));
+    ui.add_space(t.s(4));
+    ui.label(widgets::field_label(ui, "Quality"));
+    ui.add_space(t.s(1));
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(t.gap, t.gap);
         for ch in &pv.p.choices {
             let mut note = ch.note.clone();
             let size = if pv.video == VideoFormat::Mp4 { ch.size_mp4 } else { ch.size };
@@ -984,10 +984,12 @@ fn preview_body(
             }
         }
     });
-    ui.add_space(6.0);
+    ui.add_space(t.s(3));
     if pv.quality.is_audio() {
-        ui.label(small_muted(ui, "Audio format"));
+        ui.label(widgets::field_label(ui, "Audio format"));
+        ui.add_space(t.s(1));
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(t.gap, t.gap);
             for a in AudioFormat::ALL {
                 if chip(ui, pv.audio == a, a.label(), "").on_hover_text(a.hint()).clicked() {
                     pv.audio = a;
@@ -995,8 +997,10 @@ fn preview_body(
             }
         });
     } else {
-        ui.label(small_muted(ui, "Video format"));
+        ui.label(widgets::field_label(ui, "Video format"));
+        ui.add_space(t.s(1));
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(t.gap, t.gap);
             for v in VideoFormat::ALL {
                 if chip(ui, pv.video == v, v.label(), v.hint()).clicked() {
                     pv.video = v;
@@ -1007,300 +1011,165 @@ fn preview_body(
 
     let mut valid = true;
     if !pv.p.is_playlist {
-        ui.add_space(6.0);
+        ui.add_space(t.s(3));
         ui.horizontal(|ui| {
-            ui.checkbox(&mut pv.clip, format!("{}  Only download part of it", icon::SCISSORS));
+            icons::show(ui, Icon::Scissor, t.icon_size, t.text2);
+            widgets::checkbox(ui, &mut pv.clip, "Only download part of it");
             if pv.clip {
-                ui.label("from");
-                ui.add(egui::TextEdit::singleline(&mut pv.clip_from).hint_text("0:00").desired_width(64.0));
+                ui.add_space(t.s(2));
+                ui.label("From");
+                widgets::input(ui, egui::TextEdit::singleline(&mut pv.clip_from).hint_text("0:00"), None, 76.0);
                 ui.label("to");
                 let end_hint = if pv.p.duration > 0 { util::fmt_duration(pv.p.duration) } else { "end".into() };
-                ui.add(egui::TextEdit::singleline(&mut pv.clip_to).hint_text(end_hint).desired_width(64.0));
+                widgets::input(ui, egui::TextEdit::singleline(&mut pv.clip_to).hint_text(end_hint), None, 76.0);
+                let untouched = pv.clip_from.trim().is_empty() && pv.clip_to.trim().is_empty();
                 match clip_range(&pv.clip_from, &pv.clip_to, pv.p.duration) {
+                    // Nothing typed yet is not a mistake: say what to do, quietly.
+                    Err(_) if untouched => {
+                        valid = false;
+                        ui.label(muted(ui, "Enter a start, an end, or both"));
+                    }
                     Ok((a, b)) => {
                         let end = if b > 0.0 { util::fmt_timestamp(b) } else { "the end".into() };
-                        ui.label(small_muted(ui, format!("Saves {} to {end}", util::fmt_timestamp(a))));
+                        ui.label(muted(ui, format!("Saves {} to {end}", util::fmt_timestamp(a))));
                     }
                     Err(e) => {
                         valid = false;
-                        ui.label(RichText::new(e).color(pal.red).size(12.5));
+                        icons::show(ui, Icon::Alert, t.icon_size, t.danger_text);
+                        ui.label(widgets::colored(ui, e, t.danger_text));
                     }
                 }
             }
         });
     }
 
-    let mut selected = pv.picked.iter().filter(|x| **x).count();
     if pv.p.is_playlist && !pv.p.entries.is_empty() {
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(small_muted(ui, format!("Videos · {selected} of {} selected", pv.p.entries.len())));
-            if ui.small_button("All").clicked() {
-                pv.picked.iter_mut().for_each(|x| *x = true);
-            }
-            if ui.small_button("None").clicked() {
-                pv.picked.iter_mut().for_each(|x| *x = false);
-            }
-        });
-        egui::Frame::new().stroke(egui::Stroke::new(1.0, pal.border)).corner_radius(6).inner_margin(6).show(ui, |ui| {
-            egui::ScrollArea::vertical().id_salt("entries").max_height(190.0).auto_shrink([false, true]).show_rows(
-                ui,
-                22.0,
-                pv.p.entries.len(),
-                |ui, range| {
-                    for i in range {
-                        let e = &pv.p.entries[i];
-                        ui.horizontal(|ui| {
-                            ui.set_height(22.0);
-                            ui.checkbox(&mut pv.picked[i], "");
-                            ui.label(small_muted(ui, format!("{:>3}", e.index)));
-                            let w = (ui.available_width() - 60.0).max(50.0);
-                            ui.allocate_ui_with_layout(vec2(w, 20.0), Layout::left_to_right(Align::Center), |ui| {
-                                ui.set_max_width(w);
-                                ui.add(Label::new(e.title.as_str()).truncate());
-                            });
-                            if e.duration > 0 {
-                                ui.label(small_muted(ui, util::fmt_duration(e.duration)));
-                            }
-                        });
-                    }
-                },
-            );
-        });
-        selected = pv.picked.iter().filter(|x| **x).count();
-        if selected == 0 {
+        ui.add_space(t.s(3));
+        pv.picker.show(ui, thumbs, "entries", 280.0, false);
+        if pv.picker.count() == 0 {
             valid = false;
         }
     }
 
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        let w = (ui.available_width() - 190.0).max(80.0);
-        ui.allocate_ui_with_layout(vec2(w, 32.0), Layout::left_to_right(Align::Center), |ui| {
-            ui.set_max_width(w);
-            ui.add(
-                Label::new(small_muted(ui, format!("{}  Saves to {}", icon::FOLDER_SIMPLE, download_dir.display())))
-                    .truncate(),
-            );
-        });
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let label = if pv.p.is_playlist {
-                if selected == 1 { "Download 1 video".to_string() } else { format!("Download {selected} videos") }
-            } else {
-                format!("{}  Download", icon::DOWNLOAD_SIMPLE)
-            };
-            if widgets::primary_button(ui, &label, valid).clicked() {
-                *download = true;
-            }
-        });
-    });
+    ui.add_space(t.s(4));
+    let selected = pv.picker.count();
+    let label = if pv.p.is_playlist {
+        if selected == 1 { "Download 1 video".to_string() } else { format!("Download {selected} videos") }
+    } else {
+        "Download".to_string()
+    };
+    if footer(ui, download_dir, &label, Some(Icon::Download), valid) {
+        *download = true;
+    }
 }
 
-/// One line in the queue. Returns what the user clicked.
-fn job_row(ui: &mut Ui, j: &Job, thumbs: &mut Thumbs, queue_paused: bool) -> Option<Act> {
-    let pal = Pal::of(ui);
-    let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect.shrink2(vec2(0.0, 2.0)), 8, pal.card_hover);
-    }
-    let mut act = None;
-    let is_sub = !j.opts.sub_id.is_empty();
-    let audio = j.opts.preset.quality.is_audio();
+enum ResultsAct {
+    None,
+    Close,
+    Download,
+    Search(SearchSite, u32),
+    Preview(usize),
+}
 
-    let inner = rect.shrink2(vec2(8.0, 8.0));
-    let mut row = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
-    let tex = thumbs.get(&j.thumb);
-    let placeholder = if is_sub || j.is_playlist() {
-        icon::PLAYLIST
-    } else if audio {
-        icon::MUSIC_NOTES
-    } else {
-        icon::FILM_STRIP
-    };
-    widgets::thumb(&mut row, tex.as_ref(), vec2(100.0, 56.0), placeholder);
-    row.add_space(10.0);
-
-    // Buttons for this state.
-    let mut buttons: Vec<(&str, &str, Act)> = Vec::new();
-    match j.status {
-        Status::Running => {
-            buttons.push((icon::PAUSE, "Pause", Act::Pause));
-            buttons.push((icon::X, "Cancel", Act::Cancel));
-        }
-        Status::Queued => {
-            buttons.push((icon::ARROW_LINE_UP, "Download next", Act::Top));
-            buttons.push((icon::PAUSE, "Pause", Act::Pause));
-            buttons.push((icon::X, "Remove", Act::Remove));
-        }
-        Status::Paused => {
-            buttons.push((icon::PLAY, "Resume", Act::Resume));
-            buttons.push((icon::X, "Cancel", Act::Cancel));
-        }
-        Status::Done => {
-            if j.items_failed > 0 {
-                buttons.push((icon::ARROW_CLOCKWISE, "Retry the ones that failed", Act::Resume));
-            }
-            if !j.files.is_empty() {
-                buttons.push((icon::PLAY_CIRCLE, if j.files.len() == 1 { "Open" } else { "Open folder" }, Act::Open));
-                buttons.push((icon::FOLDER_OPEN, "Show in folder", Act::Reveal));
+fn results_body(ui: &mut Ui, r: &mut Results, thumbs: &mut Thumbs, download_dir: &std::path::Path) -> ResultsAct {
+    let t = tk(ui);
+    let mut act = ResultsAct::None;
+    ui.horizontal(|ui| {
+        icons::show(ui, Icon::Search, t.icon_size, t.text2);
+        ui.add(Label::new(widgets::heading_text(ui, &format!("Results for “{}”", r.query))).truncate());
+        ui.add_space(t.s(2));
+        for site in SearchSite::ALL {
+            if chip(ui, r.site == site, site.label(), "").clicked() && r.site != site {
+                act = ResultsAct::Search(site, 30);
             }
         }
-        Status::Failed => {
-            buttons.push((icon::ARROW_CLOCKWISE, "Try again", Act::Resume));
-            buttons.push((icon::TERMINAL_WINDOW, "Show log", Act::Log));
-        }
-        Status::Cancelled => {
-            buttons.push((icon::ARROW_CLOCKWISE, "Start over", Act::Resume));
-            buttons.push((icon::X, "Remove", Act::Remove));
-        }
-    }
-    let buttons_w = (buttons.len() as f32 + 1.0) * 32.0;
-    let text_w = (row.available_width() - buttons_w - 8.0).max(60.0);
-
-    // Text column.
-    let (status_text, status_color, frac, bar_color, busy) = describe(j, &pal, queue_paused);
-    row.allocate_ui_with_layout(vec2(text_w, inner.height()), Layout::top_down(Align::Min), |ui| {
-        ui.set_width(text_w);
-        ui.spacing_mut().item_spacing.y = 3.0;
-        let title = j.display_title();
-        ui.add(Label::new(RichText::new(&title).family(bold()).size(14.5)).truncate()).on_hover_text(&title);
-        let mut meta = vec![j.site.clone(), j.opts.preset.label()];
-        if is_sub {
-            meta.push("Subscription".into());
-        } else if j.n_items > 1 {
-            meta.push(format!("{} videos", j.n_items));
-        }
-        if let Some((a, b)) = j.opts.clip {
-            let end = if b > 0.0 { util::fmt_timestamp(b) } else { "end".into() };
-            meta.push(format!("Clip {}–{end}", util::fmt_timestamp(a)));
-        }
-        meta.retain(|m| !m.is_empty());
-        ui.add(Label::new(small_muted(ui, meta.join("  ·  "))).truncate());
-        widgets::bar(ui, text_w, frac, bar_color, busy);
-        let s = ui.add(Label::new(RichText::new(&status_text).size(12.5).color(status_color)).truncate());
-        if j.status == Status::Failed || j.items_failed > 0 {
-            s.on_hover_text(&j.error);
-        }
-    });
-
-    row.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let menu = ui.menu_button(RichText::new(icon::DOTS_THREE_VERTICAL).size(17.0), |ui| {
-            row_menu(ui, j, &mut act);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if icon_button(ui, Icon::Close, "Close").clicked() {
+                act = ResultsAct::Close;
+            }
         });
-        menu.response.on_hover_text("More");
-        for (ic, tip, a) in buttons.iter().rev() {
-            if icon_button(ui, ic, tip).clicked() {
-                act = Some(*a);
-            }
-        }
     });
-
-    if resp.double_clicked() && j.status == Status::Done {
-        act = Some(Act::Open);
+    ui.label(muted(ui, "Tick the ones you want, or press the eye on a row to preview it first."));
+    ui.add_space(t.s(3));
+    if let Some(i) = r.picker.show(ui, thumbs, "results", 330.0, true) {
+        act = ResultsAct::Preview(i);
     }
-    resp.context_menu(|ui| row_menu(ui, j, &mut act));
+    ui.add_space(t.s(3));
+    ui.horizontal(|ui| {
+        preset_picker(ui, "search", &mut r.preset);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if r.count < 90 && Button::secondary("More results").icon(Icon::Plus).show(ui).clicked() {
+                act = ResultsAct::Search(r.site, r.count + 30);
+            }
+        });
+    });
+    ui.add_space(t.s(2));
+    let n = r.picker.count();
+    let label = match n {
+        0 => "Download".to_string(),
+        1 => "Download 1 video".to_string(),
+        n => format!("Download {n} videos"),
+    };
+    if footer(ui, download_dir, &label, Some(Icon::Download), n > 0) {
+        act = ResultsAct::Download;
+    }
     act
 }
 
-fn row_menu(ui: &mut Ui, j: &Job, act: &mut Option<Act>) {
-    let mut item = |ui: &mut Ui, text: String, a: Act| {
-        if ui.button(text).clicked() {
-            *act = Some(a);
-            ui.close();
-        }
-    };
-    if j.status == Status::Queued {
-        item(ui, format!("{}  Download next", icon::ARROW_LINE_UP), Act::Top);
-        item(ui, format!("{}  Move to the end", icon::ARROW_LINE_DOWN), Act::Bottom);
+fn file_body(
+    ui: &mut Ui,
+    f: &direct::Probe,
+    url: &str,
+    download_dir: &std::path::Path,
+    close: &mut bool,
+    download: &mut bool,
+) {
+    let t = tk(ui);
+    ui.horizontal_top(|ui| {
+        widgets::thumb(ui, None, vec2(108.0, 108.0), file_icon(&f.name));
+        ui.add_space(t.s(2));
+        ui.vertical(|ui| {
+            ui.set_width((ui.available_width() - t.ctrl - t.s(2)).max(100.0));
+            ui.add(Label::new(widgets::heading_text(ui, &f.name)).wrap());
+            let mut meta = vec![f.size.map_or("Size unknown".to_string(), |s| util::fmt_bytes(s as f64))];
+            let mime = f.mime.split(';').next().unwrap_or("").trim();
+            if !mime.is_empty() {
+                meta.push(mime.to_string());
+            }
+            meta.push(util::host_of(url));
+            ui.label(muted(ui, meta.join("  ·  ")));
+            ui.add_space(t.s(1));
+            let how = if f.ranges {
+                "A plain file. Snag downloads it with its own engine, several connections at once, and can pause and resume it."
+            } else {
+                "A plain file. This server doesn't allow resuming, so Snag downloads it in one go."
+            };
+            widgets::para(ui, how);
+        });
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            if icon_button(ui, Icon::Close, "Close").clicked() {
+                *close = true;
+            }
+        });
+    });
+    ui.add_space(t.s(4));
+    if footer(ui, download_dir, "Download", Some(Icon::Download), true) {
+        *download = true;
     }
-    if j.status.is_finished() {
-        item(ui, format!("{}  Download again", icon::ARROWS_CLOCKWISE), Act::Redo);
-    }
-    item(ui, format!("{}  Copy link", icon::COPY), Act::CopyLink);
-    item(ui, format!("{}  Open the page", icon::ARROW_SQUARE_OUT), Act::OpenPage);
-    item(ui, format!("{}  Show log", icon::TERMINAL_WINDOW), Act::Log);
-    ui.separator();
-    let remove = if j.status == Status::Running { "Cancel and remove" } else { "Remove from list" };
-    item(ui, format!("{}  {remove}", icon::TRASH), Act::Remove);
 }
 
-/// Status line, its colour, and how full the bar is.
-fn describe(j: &Job, pal: &Pal, queue_paused: bool) -> (String, egui::Color32, f32, egui::Color32, bool) {
-    let pct = |p: f32| format!("{}%", (p * 100.0).floor() as u32);
-    let is_sub = !j.opts.sub_id.is_empty();
-    match j.status {
-        Status::Running => {
-            let l = &j.live;
-            let mut parts = Vec::new();
-            match l.stage {
-                Stage::Starting => parts.push("Starting…".to_string()),
-                Stage::Processing => {
-                    parts.push(if l.phase.is_empty() { "Finishing up…".into() } else { format!("{}…", l.phase) });
-                }
-                Stage::Downloading => {
-                    if is_sub {
-                        parts.push(format!("Checking for new videos · {} downloaded", j.items_done));
-                    } else {
-                        parts.push(pct(j.progress));
-                        if j.n_items > 1 && l.item > 0 {
-                            parts.push(format!("video {} of {}", l.item, j.n_items));
-                        }
-                    }
-                    if !l.phase.is_empty() {
-                        parts.push(l.phase.clone());
-                    }
-                    if let Some(s) = l.speed.filter(|s| *s > 0.0) {
-                        parts.push(format!("{}/s", util::fmt_bytes(s)));
-                    }
-                    if let Some(e) = l.eta.filter(|_| !is_sub) {
-                        parts.push(util::fmt_eta(e));
-                    }
-                    if let Some(t) = l.total.filter(|t| *t > 0) {
-                        parts.push(format!(
-                            "{} of {}",
-                            util::fmt_bytes(l.downloaded as f64),
-                            util::fmt_bytes(t as f64)
-                        ));
-                    }
-                }
-            }
-            let busy = l.stage == Stage::Starting || l.stage == Stage::Processing || is_sub;
-            (parts.join("  ·  "), pal.muted, j.progress, pal.accent, busy)
-        }
-        Status::Queued => {
-            let text = if queue_paused { "Waiting · queue paused" } else { "Waiting" };
-            (text.into(), pal.muted, j.progress, pal.track, false)
-        }
-        Status::Paused => {
-            let text = if j.progress > 0.0 { format!("Paused at {}", pct(j.progress)) } else { "Paused".into() };
-            (text, pal.amber, j.progress, pal.amber, false)
-        }
-        Status::Done => {
-            let text = if !j.note.is_empty() {
-                j.note.clone()
-            } else if is_sub {
-                format!(
-                    "{} new video{} · {}",
-                    j.items_done,
-                    if j.items_done == 1 { "" } else { "s" },
-                    util::fmt_bytes(j.bytes as f64)
-                )
-            } else if j.files.len() == 1 {
-                let name = j.files[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                format!("Saved · {} · {name}", util::fmt_bytes(j.bytes as f64))
-            } else {
-                let mut t = format!("Saved {} videos · {}", j.files.len(), util::fmt_bytes(j.bytes as f64));
-                if j.items_failed > 0 {
-                    t.push_str(&format!(" · {} couldn't be downloaded", j.items_failed));
-                }
-                t
-            };
-            let color = if j.items_failed > 0 { pal.amber } else { pal.green };
-            (text, color, 1.0, pal.green, false)
-        }
-        Status::Failed => (j.error.clone(), pal.red, j.progress.max(0.03), pal.red, false),
-        Status::Cancelled => ("Cancelled".into(), pal.muted, 0.0, pal.track, false),
+fn file_icon(name: &str) -> Icon {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "zip" | "rar" | "7z" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "zst" => Icon::Archive,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "tif" | "tiff" | "heic" | "psd" | "psb" => Icon::Image,
+        "mp4" | "m4v" | "mov" | "mkv" | "webm" | "avi" | "wmv" => Icon::Video,
+        "mp3" | "m4a" | "wav" | "flac" | "ogg" | "opus" | "aac" | "aif" | "aiff" => Icon::Note,
+        "xls" | "xlsx" | "csv" => Icon::Table,
+        "ppt" | "pptx" => Icon::Slides,
+        "exe" | "msi" | "msix" | "apk" | "dmg" | "pkg" | "appimage" | "deb" | "rpm" => Icon::Package,
+        "blend" | "fbx" | "obj" | "stl" | "step" | "stp" | "3mf" | "glb" | "gltf" | "usdz" => Icon::Cube,
+        _ => Icon::Page,
     }
 }
 

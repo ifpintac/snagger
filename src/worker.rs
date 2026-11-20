@@ -29,7 +29,10 @@ const MEDIA_EXTS: &[&str] = &[
 ];
 
 pub fn spawn(hub: Hub, id: String, ctl: Arc<Control>) {
-    let _ = thread::Builder::new().name(format!("download-{id}")).spawn(move || run(&hub, &id, &ctl));
+    let direct = hub.lock().job(&id).is_some_and(|j| j.opts.direct);
+    let _ = thread::Builder::new()
+        .name(format!("download-{id}"))
+        .spawn(move || if direct { crate::direct::run(&hub, &id, &ctl) } else { run(&hub, &id, &ctl) });
 }
 
 struct Part {
@@ -455,6 +458,7 @@ fn finish(
     let mut drop_staging = false;
     {
         let mut c = hub.lock();
+        let auto_retry = c.settings.auto_retry;
         let mut done_job = None;
         let mut sub_update: Option<(String, Result<u32, String>)> = None;
         match c.job_mut(id) {
@@ -502,16 +506,15 @@ fn finish(
                         sub_update = Some((j.opts.sub_id.clone(), Ok(j.items_done)));
                     }
                 } else {
-                    j.status = Status::Failed;
-                    j.finished = util::now();
-                    j.error = match errors.last() {
+                    let error = match errors.last() {
                         Some(e) => util::friendly_error(e, browser),
                         None => format!(
                             "yt-dlp stopped unexpectedly (exit code {}).",
                             code.map_or("none".into(), |c| c.to_string())
                         ),
                     };
-                    if !j.opts.sub_id.is_empty() {
+                    crate::hub::fail_or_retry(j, error, auto_retry);
+                    if j.status == Status::Failed && !j.opts.sub_id.is_empty() {
                         sub_update = Some((j.opts.sub_id.clone(), Err(j.error.clone())));
                     }
                 }

@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::hub::{Core, Hub};
+use crate::hub::{Core, Hub, POWER_COUNTDOWN, WhenDone};
 use crate::model::{Live, Stage, Status};
 use crate::platform::{self, Bar, Taskbar};
 use crate::settings::{self, save_text};
@@ -62,18 +62,23 @@ impl Manager {
         let bar;
         let keep_awake;
         let mut notify = false;
+        let mut open_folder = None;
+        let mut power = None;
         {
             let mut c = hub.lock();
+            let now = util::now();
             let engine_ok = c.engine.ready && c.engine.busy.is_none() && c.engine.ytdlp.is_some();
             let running = c.jobs.iter().filter(|j| j.status == Status::Running).count();
-            if engine_ok && !c.queue_paused {
+            let in_window = c.window_override || c.settings.in_window(settings::local_minute());
+            if engine_ok && !c.queue_paused && in_window {
                 let mut free = (c.settings.parallel as usize).saturating_sub(running);
                 for j in c.jobs.iter_mut() {
                     if free == 0 {
                         break;
                     }
-                    if j.status == Status::Queued {
+                    if j.status == Status::Queued && !j.retry_pending(now) {
                         j.status = Status::Running;
+                        j.retry_at = 0;
                         j.live = Live { stage: Stage::Starting, ..Default::default() };
                         let ctl = Hub::new_control();
                         j.control = Some(ctl.clone());
@@ -110,15 +115,36 @@ impl Manager {
             };
             keep_awake = c.settings.keep_awake && running_now > 0;
 
-            // One notification when a batch of downloads finishes.
-            let now = util::now();
+            // One notification (and the "when done" action) when a batch finishes.
             if !active.is_empty() && !self.was_active {
                 self.batch_started = now;
             }
-            if self.was_active && active.is_empty() && c.settings.notify_done {
+            let batch_over = self.was_active && active.is_empty();
+            if batch_over && c.settings.notify_done {
                 notify = c.jobs.iter().any(|j| j.status == Status::Done && j.finished >= self.batch_started);
             }
             self.was_active = !active.is_empty();
+            if batch_over && !c.queue_paused {
+                match std::mem::take(&mut c.when_done) {
+                    WhenDone::Nothing => {}
+                    WhenDone::OpenFolder => open_folder = Some(c.settings.download_dir.clone()),
+                    wd => {
+                        c.power_at = Some((wd, now + POWER_COUNTDOWN));
+                        c.toast(format!("All done. {} in a minute unless you cancel.", wd.label()));
+                    }
+                }
+            }
+            if self.was_active && c.power_at.is_some() {
+                // Something new started downloading: forget the sleep/shut-down.
+                c.power_at = None;
+                c.toast("New downloads started, so Snag won't sleep or shut down the PC.");
+            }
+            if let Some((wd, at)) = c.power_at
+                && now >= at
+            {
+                c.power_at = None;
+                power = Some(wd);
+            }
 
             if running_now > 0 && self.last_progress_save.elapsed() > Duration::from_secs(15) {
                 c.dirty.queue = true;
@@ -141,6 +167,18 @@ impl Manager {
         self.taskbar.set(bar);
         if notify {
             platform::notify_attention(true);
+        }
+        if let Some(dir) = open_folder {
+            let _ = std::fs::create_dir_all(&dir);
+            platform::open_path(&dir);
+        }
+        if let Some(wd) = power {
+            save_all(hub);
+            match wd {
+                WhenDone::Sleep => platform::sleep_pc(),
+                WhenDone::ShutDown => platform::shut_down(),
+                _ => {}
+            }
         }
     }
 

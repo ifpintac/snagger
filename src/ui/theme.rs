@@ -1,19 +1,180 @@
-//! Fonts, spacing and colours.
+//! Design tokens, fonts and the base egui style.
 //!
-//! Text uses Windows' own Segoe UI. Icons come from the Phosphor icon font
-//! (MIT, via egui-phosphor). Fonts for Chinese, Japanese, Korean, Thai, Indic
-//! scripts and emoji are loaded from Windows only when a title needs them.
+//! Snag's look is Neumorphism ("soft UI"): page and panels share one colour
+//! and shape comes from paired light and dark shadows. Every colour, size and
+//! duration the UI uses comes from [`Tokens`]; nothing else hard-codes them.
+//! The light set mirrors the design brief one-to-one. Text is DM Sans (SIL OFL,
+//! bundled in `assets/fonts`); icons are Iconoir (MIT, see `icons.rs`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, TextStyle, ThemePreference, vec2,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke, TextStyle,
+    ThemePreference, Ui, vec2,
 };
 use eframe::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
 
 use crate::settings::ThemePref;
 
+/// The design tokens, by the names the brief uses.
+#[derive(Clone, Copy, Debug)]
+pub struct Tokens {
+    // type
+    pub fs_xs: f32,
+    pub fs_sm: f32,
+    pub fs: f32,
+    pub fs_lg: f32,
+    pub fs_xl: f32,
+    /// In the set for completeness; no text in Snag is that large.
+    #[allow(dead_code)]
+    pub fs_2xl: f32,
+    pub lh: f32,
+    pub heading_tracking: f32,
+    // colour
+    pub bg: Color32,
+    pub surface: Color32,
+    pub sunken: Color32,
+    pub border: Color32,
+    pub border_strong: Color32,
+    pub text: Color32,
+    pub text2: Color32,
+    pub accent: Color32,
+    pub accent_text: Color32,
+    pub on_accent: Color32,
+    pub accent_soft: Color32,
+    pub pri_bg: Color32,
+    pub pri_fg: Color32,
+    pub danger: Color32,
+    pub danger_text: Color32,
+    pub success_text: Color32,
+    pub warning_text: Color32,
+    // space (4 px base)
+    pub ctrl: f32,
+    pub padx: f32,
+    pub gap: f32,
+    pub row: f32,
+    // shape and depth
+    pub r_sm: f32,
+    pub r_md: f32,
+    pub r_lg: f32,
+    pub r_btn: f32,
+    pub shadow_overlay: Shadow,
+    pub shadow_modal: Shadow,
+    pub nm_d: Color32,
+    pub nm_l: Color32,
+    // icons
+    pub icon_size: f32,
+    // motion, in seconds
+    pub dur_fast: f32,
+    pub dur_base: f32,
+    /// In the set for completeness; Snag has no slow transitions.
+    #[allow(dead_code)]
+    pub dur_slow: f32,
+}
+
+const fn hex(rgb: u32) -> Color32 {
+    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+impl Tokens {
+    /// The brief's light tokens.
+    pub const fn light() -> Tokens {
+        Tokens {
+            fs_xs: 12.0,
+            fs_sm: 13.0,
+            fs: 14.0,
+            fs_lg: 17.0,
+            fs_xl: 22.0,
+            fs_2xl: 28.0,
+            lh: 1.5,
+            heading_tracking: -0.01,
+            bg: hex(0xE5E7EB),
+            surface: hex(0xE5E7EB),
+            sunken: hex(0xD9DCE2),
+            border: hex(0xBCC2CD),
+            border_strong: hex(0x737F96),
+            text: hex(0x181B20),
+            text2: hex(0x4F5869),
+            accent: hex(0x1F4FBF),
+            accent_text: hex(0x1F4FBF),
+            on_accent: hex(0xFFFFFF),
+            accent_soft: hex(0xCDD5E6),
+            pri_bg: hex(0x1F4FBF),
+            pri_fg: hex(0xFFFFFF),
+            danger: hex(0xB42318),
+            danger_text: hex(0xAF2217),
+            success_text: hex(0x16693B),
+            warning_text: hex(0x865100),
+            ctrl: 36.0,
+            padx: 14.0,
+            gap: 12.0,
+            row: 48.0,
+            r_sm: 10.0,
+            r_md: 14.0,
+            r_lg: 22.0,
+            r_btn: 999.0,
+            shadow_overlay: Shadow { offset: [0, 4], blur: 12, spread: 0, color: Color32::from_black_alpha(20) },
+            shadow_modal: Shadow { offset: [0, 16], blur: 40, spread: 0, color: Color32::from_black_alpha(46) },
+            nm_d: hex(0xBEC0C3),
+            nm_l: hex(0xFFFFFF),
+            icon_size: 20.0,
+            dur_fast: 0.16,
+            dur_base: 0.26,
+            dur_slow: 0.42,
+        }
+    }
+
+    /// Derived for Snag's dark setting with the same rules (hue 220, paired
+    /// shadows). Not part of the brief.
+    pub const fn dark() -> Tokens {
+        let l = Tokens::light();
+        Tokens {
+            bg: hex(0x2A2F37),
+            surface: hex(0x2A2F37),
+            sunken: hex(0x22262D),
+            border: hex(0x3E4551),
+            border_strong: hex(0x7D879A),
+            text: hex(0xE7EAEF),
+            text2: hex(0xA9B1BF),
+            accent: hex(0x3D6BE0),
+            accent_text: hex(0x8FB0FF),
+            on_accent: hex(0xFFFFFF),
+            accent_soft: hex(0x34405A),
+            pri_bg: hex(0x3D6BE0),
+            pri_fg: hex(0xFFFFFF),
+            danger: hex(0xE5534B),
+            danger_text: hex(0xFF8F87),
+            success_text: hex(0x6FD49A),
+            warning_text: hex(0xF0B65A),
+            shadow_overlay: Shadow { offset: [0, 4], blur: 12, spread: 0, color: Color32::from_black_alpha(90) },
+            shadow_modal: Shadow { offset: [0, 16], blur: 40, spread: 0, color: Color32::from_black_alpha(140) },
+            nm_d: hex(0x1D2026),
+            nm_l: hex(0x373D47),
+            ..l
+        }
+    }
+
+    /// 4 px spacing steps: s(1)=4, s(2)=8, s(3)=12, s(4)=16, s(6)=24, s(8)=32.
+    pub const fn s(&self, steps: u8) -> f32 {
+        4.0 * steps as f32
+    }
+}
+
+static LIGHT: Tokens = Tokens::light();
+static DARK: Tokens = Tokens::dark();
+
+/// The tokens for whichever theme is showing.
+pub fn tk(ui: &Ui) -> &'static Tokens {
+    if ui.visuals().dark_mode { &DARK } else { &LIGHT }
+}
+
+pub fn tk_ctx(ctx: &egui::Context) -> &'static Tokens {
+    if ctx.global_style().visuals.dark_mode { &DARK } else { &LIGHT }
+}
+
+/// Headings, labels and buttons: DM Sans 600.
 pub fn bold() -> FontFamily {
     FontFamily::Name("bold".into())
 }
@@ -30,27 +191,42 @@ fn read_font(names: &[&str]) -> Option<Vec<u8>> {
 
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-    if let Some(data) = read_font(&["segoeui.ttf"]) {
-        fonts.font_data.insert("segoe".into(), Arc::new(FontData::from_owned(data)));
-        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "segoe".into());
-    }
-    // Icons go second so they never replace ordinary letters.
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    fonts.font_data.insert(
+        "dm-sans".into(),
+        Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/DMSans-Regular.ttf"))),
+    );
+    fonts.font_data.insert(
+        "dm-sans-semibold".into(),
+        Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/DMSans-SemiBold.ttf"))),
+    );
+    // DM Sans first; egui's emoji fonts and Windows' symbol font only fill in
+    // glyphs DM Sans doesn't have (arrows, ≈, rare symbols).
+    let fallbacks: Vec<String> = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| f.contains("moji") || f.contains("Noto"))
+        .collect();
     if let Some(data) = read_font(&["seguisym.ttf"]) {
         fonts.font_data.insert("symbols".into(), Arc::new(FontData::from_owned(data)));
-        fonts.families.entry(FontFamily::Proportional).or_default().push("symbols".into());
     }
+    let mut regular = vec!["dm-sans".to_string()];
+    regular.extend(fallbacks.iter().cloned());
+    regular.push("symbols".into());
+    let mut semibold = vec!["dm-sans-semibold".to_string()];
+    semibold.extend(fallbacks);
+    semibold.push("symbols".into());
+    regular.retain(|f| fonts.font_data.contains_key(f));
+    semibold.retain(|f| fonts.font_data.contains_key(f));
+    fonts.families.insert(FontFamily::Proportional, regular);
+    fonts.families.insert(bold(), semibold);
+    // The log and the template field show code, so they stay monospaced.
     if let Some(data) = read_font(&["consola.ttf"]) {
         fonts.font_data.insert("consolas".into(), Arc::new(FontData::from_owned(data)));
         fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "consolas".into());
     }
-    // A semibold family for titles, falling back to the regular stack.
-    let mut bold_stack = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    if let Some(data) = read_font(&["seguisb.ttf"]) {
-        fonts.font_data.insert("segoe-semibold".into(), Arc::new(FontData::from_owned(data)));
-        bold_stack.insert(0, "segoe-semibold".into());
-    }
-    fonts.families.insert(bold(), bold_stack);
     ctx.set_fonts(fonts);
 }
 
@@ -119,82 +295,91 @@ impl ScriptFonts {
     }
 }
 
+static REDUCED: AtomicBool = AtomicBool::new(false);
+
+/// Windows "Animation effects" is off: no hover blends, no moving bars.
+pub fn reduced_motion() -> bool {
+    REDUCED.load(Ordering::Relaxed)
+}
+
+/// Maps the tokens onto egui's own widgets (combo boxes, sliders, menus,
+/// dialogs, tooltips, scroll bars), so built-ins match Snag's components.
 pub fn apply_style(ctx: &egui::Context, pref: ThemePref) {
     ctx.set_theme(match pref {
         ThemePref::System => ThemePreference::System,
         ThemePref::Light => ThemePreference::Light,
         ThemePref::Dark => ThemePreference::Dark,
     });
-    ctx.all_styles_mut(|s| {
-        s.spacing.item_spacing = vec2(8.0, 6.0);
-        s.spacing.button_padding = vec2(10.0, 4.0);
-        s.spacing.interact_size = vec2(36.0, 28.0);
-        s.spacing.scroll.bar_width = 8.0;
-        s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));
-        s.text_styles.insert(TextStyle::Button, FontId::proportional(14.0));
-        s.text_styles.insert(TextStyle::Small, FontId::proportional(12.0));
-        s.text_styles.insert(TextStyle::Heading, FontId::new(20.0, bold()));
-        s.text_styles.insert(TextStyle::Monospace, FontId::monospace(12.5));
-        let r = CornerRadius::same(6);
-        s.visuals.widgets.noninteractive.corner_radius = r;
-        s.visuals.widgets.inactive.corner_radius = r;
-        s.visuals.widgets.hovered.corner_radius = r;
-        s.visuals.widgets.active.corner_radius = r;
-        s.visuals.widgets.open.corner_radius = r;
-        s.visuals.window_corner_radius = CornerRadius::same(10);
-        s.visuals.menu_corner_radius = CornerRadius::same(8);
-        s.visuals.selection.bg_fill =
-            if s.visuals.dark_mode { Color32::from_rgb(38, 99, 196) } else { Color32::from_rgb(59, 130, 246) };
-    });
-}
+    let reduced = crate::platform::reduced_motion();
+    REDUCED.store(reduced, Ordering::Relaxed);
+    for (theme, t) in [(egui::Theme::Light, &LIGHT), (egui::Theme::Dark, &DARK)] {
+        ctx.style_mut_of(theme, |s| {
+            s.animation_time = if reduced { 0.0 } else { t.dur_base };
+            s.spacing.item_spacing = vec2(t.s(2), t.s(2));
+            s.spacing.button_padding = vec2(t.padx, t.s(1) + 2.0);
+            s.spacing.interact_size = vec2(t.ctrl, t.ctrl);
+            s.spacing.combo_height = 280.0;
+            s.spacing.menu_margin = egui::Margin::same(t.s(2) as i8);
+            s.spacing.menu_width = 240.0;
+            s.spacing.window_margin = egui::Margin::same(t.s(6) as i8);
+            s.spacing.slider_width = 160.0;
+            s.spacing.scroll.bar_width = 8.0;
+            s.spacing.scroll.floating = true;
+            s.text_styles.insert(TextStyle::Small, FontId::proportional(t.fs_xs));
+            s.text_styles.insert(TextStyle::Body, FontId::proportional(t.fs));
+            s.text_styles.insert(TextStyle::Button, FontId::new(t.fs, bold()));
+            s.text_styles.insert(TextStyle::Heading, FontId::new(t.fs_xl, bold()));
+            s.text_styles.insert(TextStyle::Monospace, FontId::monospace(t.fs_sm));
+            s.interaction.selectable_labels = false;
 
-/// Colours that work on both light and dark backgrounds.
-#[derive(Clone, Copy)]
-pub struct Pal {
-    pub dark: bool,
-    pub accent: Color32,
-    pub green: Color32,
-    pub red: Color32,
-    pub amber: Color32,
-    pub track: Color32,
-    pub card: Color32,
-    pub card_hover: Color32,
-    pub border: Color32,
-    pub muted: Color32,
-    pub text: Color32,
-}
-
-impl Pal {
-    pub fn of(ui: &egui::Ui) -> Pal {
-        let v = ui.visuals();
-        if v.dark_mode {
-            Pal {
-                dark: true,
-                accent: Color32::from_rgb(88, 160, 255),
-                green: Color32::from_rgb(74, 201, 126),
-                red: Color32::from_rgb(255, 112, 104),
-                amber: Color32::from_rgb(246, 180, 72),
-                track: Color32::from_gray(52),
-                card: Color32::from_gray(32),
-                card_hover: Color32::from_gray(38),
-                border: Color32::from_gray(48),
-                muted: Color32::from_gray(150),
-                text: v.text_color(),
-            }
-        } else {
-            Pal {
-                dark: false,
-                accent: Color32::from_rgb(37, 99, 235),
-                green: Color32::from_rgb(22, 150, 76),
-                red: Color32::from_rgb(200, 40, 34),
-                amber: Color32::from_rgb(196, 122, 0),
-                track: Color32::from_gray(222),
-                card: Color32::from_gray(252),
-                card_hover: Color32::from_gray(246),
-                border: Color32::from_gray(222),
-                muted: Color32::from_gray(105),
-                text: v.text_color(),
-            }
-        }
+            let v = &mut s.visuals;
+            v.panel_fill = t.bg;
+            v.window_fill = t.surface;
+            v.faint_bg_color = t.sunken;
+            v.extreme_bg_color = t.sunken;
+            v.code_bg_color = t.sunken;
+            v.hyperlink_color = t.accent_text;
+            v.warn_fg_color = t.warning_text;
+            v.error_fg_color = t.danger_text;
+            v.window_corner_radius = CornerRadius::same(t.r_lg as u8);
+            v.menu_corner_radius = CornerRadius::same(t.r_md as u8);
+            v.window_shadow = t.shadow_modal;
+            v.popup_shadow = t.shadow_overlay;
+            v.window_stroke = Stroke::new(1.0, t.border);
+            v.selection.bg_fill = t.accent_soft;
+            v.selection.stroke = Stroke::new(1.0, t.accent_text);
+            v.text_cursor.stroke = Stroke::new(2.0, t.accent);
+            let r = CornerRadius::same(t.r_sm as u8);
+            let w = &mut v.widgets;
+            w.noninteractive.bg_fill = t.surface;
+            w.noninteractive.weak_bg_fill = t.surface;
+            w.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
+            w.noninteractive.fg_stroke = Stroke::new(1.0, t.text);
+            w.noninteractive.corner_radius = r;
+            // Combo boxes and drag values read as inputs: a 3:1 edge.
+            w.inactive.bg_fill = t.sunken;
+            w.inactive.weak_bg_fill = t.sunken;
+            w.inactive.bg_stroke = Stroke::new(1.0, t.border_strong);
+            w.inactive.fg_stroke = Stroke::new(1.0, t.text);
+            w.inactive.corner_radius = r;
+            w.inactive.expansion = 0.0;
+            w.hovered.bg_fill = t.sunken;
+            w.hovered.weak_bg_fill = t.sunken;
+            w.hovered.bg_stroke = Stroke::new(1.0, t.text2);
+            w.hovered.fg_stroke = Stroke::new(1.5, t.text);
+            w.hovered.corner_radius = r;
+            w.hovered.expansion = 0.0;
+            w.active.bg_fill = t.sunken;
+            w.active.weak_bg_fill = t.sunken;
+            w.active.bg_stroke = Stroke::new(2.0, t.accent);
+            w.active.fg_stroke = Stroke::new(1.5, t.text);
+            w.active.corner_radius = r;
+            w.active.expansion = 0.0;
+            w.open.bg_fill = t.sunken;
+            w.open.weak_bg_fill = t.sunken;
+            w.open.bg_stroke = Stroke::new(2.0, t.accent);
+            w.open.fg_stroke = Stroke::new(1.5, t.text);
+            w.open.corner_radius = r;
+        });
     }
 }

@@ -121,6 +121,16 @@ pub struct Settings {
     pub proxy: String,
     pub retries: u32,
     pub fragments: u32,
+    /// Connections per plain file download (Snag's own engine).
+    pub connections: u32,
+    /// Wait a few seconds between playlist videos, so sites don't block you.
+    pub gentle_playlists: bool,
+    /// Try again by itself after connection problems.
+    pub auto_retry: bool,
+    /// Only start downloads between these times (minutes after midnight).
+    pub window_on: bool,
+    pub window_start: u16,
+    pub window_end: u16,
 
     pub clipboard: ClipMode,
     pub batch_playlists: bool,
@@ -158,6 +168,12 @@ impl Default for Settings {
             proxy: String::new(),
             retries: 10,
             fragments: 4,
+            connections: 6,
+            gentle_playlists: true,
+            auto_retry: true,
+            window_on: false,
+            window_start: 22 * 60,
+            window_end: 7 * 60,
             clipboard: ClipMode::Ask,
             batch_playlists: false,
             resume_on_start: true,
@@ -184,11 +200,36 @@ impl Settings {
         self.parallel = self.parallel.clamp(1, 10);
         self.retries = self.retries.clamp(0, 100);
         self.fragments = self.fragments.clamp(1, 16);
+        self.connections = self.connections.clamp(1, 16);
+        self.window_start %= 24 * 60;
+        self.window_end %= 24 * 60;
         if self.download_dir.as_os_str().is_empty() {
             self.download_dir = default_download_dir();
         }
         self
     }
+
+    /// Whether new downloads may start at `minute` (minutes after local
+    /// midnight). A window like 22:00–07:00 wraps past midnight.
+    pub fn in_window(&self, minute: u16) -> bool {
+        if !self.window_on || self.window_start == self.window_end {
+            return true;
+        }
+        let (a, b) = (self.window_start, self.window_end);
+        if a < b { (a..b).contains(&minute) } else { minute >= a || minute < b }
+    }
+}
+
+/// "22:00"
+pub fn fmt_minute(m: u16) -> String {
+    format!("{:02}:{:02}", m / 60 % 24, m % 60)
+}
+
+/// Minutes after midnight, local time.
+pub fn local_minute() -> u16 {
+    use chrono::Timelike;
+    let t = chrono::Local::now();
+    (t.hour() * 60 + t.minute()) as u16
 }
 
 pub const BROWSERS: &[(&str, &str)] = &[
@@ -266,4 +307,27 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, bytes)?;
     fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_window_wraps_midnight() {
+        let s = Settings { window_on: true, window_start: 22 * 60, window_end: 7 * 60, ..Default::default() };
+        assert!(s.in_window(23 * 60));
+        assert!(s.in_window(3 * 60));
+        assert!(!s.in_window(12 * 60));
+        assert!(!s.in_window(7 * 60));
+        let day = Settings { window_on: true, window_start: 9 * 60, window_end: 17 * 60, ..Default::default() };
+        assert!(day.in_window(9 * 60) && !day.in_window(17 * 60) && !day.in_window(8 * 60));
+        assert!(Settings::default().in_window(12 * 60));
+    }
+
+    #[test]
+    fn times_format() {
+        assert_eq!(fmt_minute(450), "07:30");
+        assert_eq!(fmt_minute(22 * 60), "22:00");
+    }
 }

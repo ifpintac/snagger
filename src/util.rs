@@ -582,9 +582,159 @@ pub fn capitalize(s: &str) -> String {
     }
 }
 
+/// How long to wait before trying a failed download again by itself, or
+/// None when trying again won't help (a private video, a wrong link).
+pub fn retry_delay(error: &str, attempts_so_far: u32) -> Option<u64> {
+    let attempt = attempts_so_far as usize;
+    if attempt >= 3 {
+        return None;
+    }
+    let low = error.to_lowercase();
+    let rate_limited = ["429", "too many requests", "rate-limit", "rate limit"].iter().any(|p| low.contains(p));
+    if rate_limited {
+        return Some([300, 900, 1800][attempt]);
+    }
+    let passing = [
+        "timed out",
+        "timeout",
+        "couldn't reach",
+        "connection",
+        "reset by peer",
+        "remote end closed",
+        "incompleteread",
+        "incomplete read",
+        "temporarily",
+        "http error 500",
+        "http error 502",
+        "http error 503",
+        "http error 504",
+        "dropped",
+        "cut short",
+        "stopped responding",
+        "unable to download webpage",
+        "eof occurred",
+    ];
+    passing.iter().any(|p| low.contains(p)).then(|| [20, 90, 300][attempt])
+}
+
+/// Errors that usually mean the site changed and yt-dlp needs updating.
+pub fn engine_problem(error: &str) -> bool {
+    let low = error.to_lowercase();
+    [
+        "unable to extract",
+        "failed to extract",
+        "signature extraction",
+        "nsig extraction",
+        "could not find js function",
+        "player response",
+        "jsinterp",
+        "challenge",
+        "failed to parse json",
+    ]
+    .iter()
+    .any(|p| low.contains(p))
+}
+
+/// "%20" → " ", "%C3%A9" → "é". Leaves broken escapes as they are.
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("zz"), 16)
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Escapes what may not appear raw in an HTTP request line (spaces,
+/// non-ASCII letters, quotes) and keeps everything else, including existing
+/// %-escapes, as it is.
+pub fn encode_url(url: &str) -> String {
+    let mut out = String::with_capacity(url.len());
+    for b in url.bytes() {
+        if b.is_ascii_graphic() && !matches!(b, b'"' | b'<' | b'>' | b'\\' | b'^' | b'`' | b'{' | b'|' | b'}') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The link inside a `snag:` address (what the browser button sends).
+pub fn from_snag_scheme(arg: &str) -> Option<String> {
+    let rest = arg.strip_prefix("snag:").or_else(|| arg.strip_prefix("SNAG:"))?;
+    let rest = rest.trim_start_matches('/');
+    let decoded = percent_decode(rest);
+    let decoded = decoded.trim_end_matches('/').to_string();
+    extract_links(&decoded).into_iter().next()
+}
+
+/// File types Snag downloads itself, without yt-dlp, when a link ends in them.
+const FILE_EXTS: &[&str] = &[
+    "zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "img", "dmg", "pkg", "exe", "msi", "msix",
+    "apk", "appimage", "deb", "rpm", "pdf", "epub", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "psd", "psb",
+    "ai", "eps", "indd", "sketch", "fig", "xd", "blend", "fbx", "obj", "stl", "step", "stp", "3mf", "glb", "gltf",
+    "usdz", "dwg", "dxf", "ttf", "otf", "woff2", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "heic", "raw",
+    "cr2", "nef", "arw", "dng", "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "mp3", "m4a", "wav", "flac", "ogg",
+    "opus", "aac", "aif", "aiff", "bin", "dat",
+];
+
+/// A link to a file (ends in .zip, .pdf, .mp4…) rather than a page.
+pub fn file_like_url(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    let Some(after_host) = path.split_once("://").map(|(_, r)| r) else { return false };
+    let Some((_, path)) = after_host.split_once('/') else { return false };
+    let last = path.rsplit('/').next().unwrap_or("");
+    match last.rsplit_once('.') {
+        Some((stem, ext)) => !stem.is_empty() && FILE_EXTS.contains(&ext.to_ascii_lowercase().as_str()),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retries_only_what_can_pass() {
+        assert_eq!(retry_delay("Couldn't reach the site. Check your internet connection", 0), Some(20));
+        assert_eq!(retry_delay("HTTP Error 429: Too Many Requests", 1), Some(900));
+        assert_eq!(retry_delay("Private video. Sign in", 0), None);
+        assert_eq!(retry_delay("The connection dropped", 3), None);
+        assert!(engine_problem("Unable to extract uploader id"));
+        assert!(!engine_problem("Video unavailable"));
+    }
+
+    #[test]
+    fn decodes_links_and_schemes() {
+        assert_eq!(percent_decode("My%20File%C3%A9.zip"), "My Fileé.zip");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(encode_url("https://x.com/a b/é%20.zip"), "https://x.com/a%20b/%C3%A9%20.zip");
+        assert_eq!(
+            from_snag_scheme("snag:https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc").as_deref(),
+            Some("https://www.youtube.com/watch?v=abc")
+        );
+        assert_eq!(from_snag_scheme("snag://https://vimeo.com/1/").as_deref(), Some("https://vimeo.com/1"));
+    }
+
+    #[test]
+    fn spots_file_links() {
+        assert!(file_like_url("https://cdn.example.com/a/Plans%20v2.ZIP?sig=1"));
+        assert!(file_like_url("https://example.com/f/render.mp4"));
+        assert!(!file_like_url("https://www.youtube.com/watch?v=abc"));
+        assert!(!file_like_url("https://example.com/page.html"));
+        assert!(!file_like_url("https://example.com/"));
+    }
 
     #[test]
     fn finds_links_in_messy_text() {

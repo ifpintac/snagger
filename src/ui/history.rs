@@ -1,12 +1,12 @@
 //! The History tab: everything Snag has saved, searchable.
 
-use eframe::egui::{self, Align, Label, Layout, RichText, Sense, Ui, UiBuilder, vec2};
-use egui_phosphor::regular as icon;
+use eframe::egui::{self, Align, Label, Layout, Sense, Ui, UiBuilder, vec2};
 
 use super::Confirm;
-use super::theme::{Pal, bold};
+use super::icons::{self, Icon};
+use super::theme::tk;
 use super::thumbs::Thumbs;
-use super::widgets::{self, icon_button, small_muted};
+use super::widgets::{self, Button, icon_button, menu_item, muted};
 use crate::hub::Hub;
 use crate::model::{HistoryItem, Job};
 use crate::platform;
@@ -38,24 +38,23 @@ impl HistoryUi {
         thumbs: &mut Thumbs,
         confirm: &mut Option<Confirm>,
     ) -> Option<String> {
+        let t = tk(ui);
         let mut acts: Vec<(String, Act)> = Vec::new();
         {
             let c = hub.lock();
             ui.horizontal(|ui| {
-                widgets::heading(ui, "History");
-                ui.label(small_muted(ui, format!("{} downloads", c.history.len())));
+                widgets::title(ui, "History");
+                ui.label(muted(ui, format!("{} downloads", c.history.len())));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if !c.history.is_empty() && ui.button(format!("{}  Clear history", icon::TRASH)).clicked() {
+                    if !c.history.is_empty() && Button::secondary("Clear history").icon(Icon::Trash).show(ui).clicked()
+                    {
                         *confirm = Some(Confirm::ClearHistory);
                     }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
-                            .hint_text(format!("{}  Search titles, channels, sites", icon::MAGNIFYING_GLASS))
-                            .desired_width(300.0),
-                    );
+                    let edit = egui::TextEdit::singleline(&mut self.query).hint_text("Search titles, channels, sites");
+                    widgets::input(ui, edit, Some(Icon::Search), 300.0);
                 });
             });
-            ui.add_space(6.0);
+            ui.add_space(t.s(4));
 
             let q = self.query.trim().to_lowercase();
             let rows: Vec<&HistoryItem> = c
@@ -70,11 +69,11 @@ impl HistoryUi {
                 })
                 .collect();
             if rows.is_empty() {
-                ui.add_space(40.0);
+                ui.add_space(t.s(10));
                 ui.vertical_centered(|ui| {
-                    let pal = Pal::of(ui);
-                    ui.label(RichText::new(icon::CLOCK_COUNTER_CLOCKWISE).size(40.0).color(pal.muted));
-                    ui.label(small_muted(
+                    icons::show(ui, Icon::History, t.icon_size * 2.0, t.text2);
+                    ui.add_space(t.s(2));
+                    ui.label(muted(
                         ui,
                         if q.is_empty() { "Finished downloads show up here." } else { "Nothing matches that search." },
                     ));
@@ -140,34 +139,44 @@ impl HistoryUi {
 }
 
 fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act> {
-    let pal = Pal::of(ui);
+    let t = tk(ui);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect.shrink2(vec2(0.0, 2.0)), 8, pal.card_hover);
+    let bg = rect.shrink2(vec2(t.s(1) + 2.0, 3.0));
+    let hover = ui.ctx().animate_bool_with_time(
+        resp.id.with("hover"),
+        resp.hovered(),
+        if super::theme::reduced_motion() { 0.0 } else { t.dur_fast },
+    );
+    if hover > 0.0 {
+        widgets::raised_faded(ui.painter(), bg, t.r_md, t.surface, hover, t);
     }
-    let inner = rect.shrink2(vec2(8.0, 6.0));
+    let inner = bg.shrink2(vec2(t.s(3), t.s(1)));
     let mut row = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
     let audio = h.preset.quality.is_audio();
     let tex = thumbs.get(&h.thumb);
-    let icon_ph = if h.items > 1 {
-        icon::PLAYLIST
+    let icon_ph = if h.opts.direct {
+        Icon::Page
+    } else if h.items > 1 {
+        Icon::Playlist
     } else if audio {
-        icon::MUSIC_NOTES
+        Icon::Music
     } else {
-        icon::FILM_STRIP
+        Icon::Video
     };
     widgets::thumb(&mut row, tex.as_ref(), vec2(86.0, 48.0), icon_ph);
-    row.add_space(10.0);
+    row.add_space(t.s(3));
     let exists = h.files.iter().any(|f| f.exists());
     let mut act = None;
-    let text_w = (row.available_width() - 5.0 * 32.0).max(60.0);
+    let text_w = (row.available_width() - 4.0 * (t.ctrl + t.s(1)) - t.s(2)).max(60.0);
     row.allocate_ui_with_layout(vec2(text_w, inner.height()), Layout::top_down(Align::Min), |ui| {
         ui.set_width(text_w);
-        ui.spacing_mut().item_spacing.y = 3.0;
-        let title = RichText::new(&h.title).family(bold()).size(14.5);
-        let title = if exists { title } else { title.color(pal.muted) };
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.add_space(t.s(1));
+        let title = widgets::strong(ui, &h.title);
+        let title = if exists { title } else { title.color(t.text2) };
         ui.add(Label::new(title).truncate()).on_hover_text(&h.title);
-        let mut meta = vec![h.site.clone(), h.preset.label(), util::fmt_date(h.finished)];
+        let kind = if h.opts.direct { "File".to_string() } else { h.preset.label() };
+        let mut meta = vec![h.site.clone(), kind, util::fmt_date(h.finished)];
         if h.items > 1 {
             meta.push(format!("{} videos", h.items));
         }
@@ -178,19 +187,19 @@ fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act>
             meta.push("file moved or deleted".into());
         }
         meta.retain(|m| !m.is_empty());
-        ui.add(Label::new(small_muted(ui, meta.join("  ·  "))).truncate());
+        ui.add(Label::new(widgets::caption(ui, meta.join("  ·  "))).truncate());
     });
     row.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let menu = ui.menu_button(RichText::new(icon::DOTS_THREE_VERTICAL).size(17.0), |ui| menu_items(ui, &mut act));
-        menu.response.on_hover_text("More");
-        if icon_button(ui, icon::ARROWS_CLOCKWISE, "Download again").clicked() {
+        ui.spacing_mut().item_spacing.x = t.s(1);
+        widgets::more_menu(ui, |ui| menu_items(ui, &mut act));
+        if icon_button(ui, Icon::Refresh, "Download again").clicked() {
             act = Some(Act::Again);
         }
         if exists {
-            if icon_button(ui, icon::FOLDER_OPEN, "Show in folder").clicked() {
+            if icon_button(ui, Icon::Folder, "Show in folder").clicked() {
                 act = Some(Act::Reveal);
             }
-            if icon_button(ui, icon::PLAY_CIRCLE, "Open").clicked() {
+            if icon_button(ui, Icon::Open, "Open").clicked() {
                 act = Some(Act::Open);
             }
         }
@@ -203,15 +212,14 @@ fn history_row(ui: &mut Ui, h: &HistoryItem, thumbs: &mut Thumbs) -> Option<Act>
 }
 
 fn menu_items(ui: &mut Ui, act: &mut Option<Act>) {
-    for (text, a) in [
-        (format!("{}  Download again", icon::ARROWS_CLOCKWISE), Act::Again),
-        (format!("{}  Copy link", icon::COPY), Act::Copy),
-        (format!("{}  Open the page", icon::ARROW_SQUARE_OUT), Act::Page),
-        (format!("{}  Remove from history", icon::TRASH), Act::Forget),
+    for (icon, text, a) in [
+        (Icon::Refresh, "Download again", Act::Again),
+        (Icon::Copy, "Copy link", Act::Copy),
+        (Icon::Globe, "Open the page", Act::Page),
+        (Icon::Trash, "Remove from history", Act::Forget),
     ] {
-        if ui.button(text).clicked() {
+        if menu_item(ui, Some(icon), text).clicked() {
             *act = Some(a);
-            ui.close();
         }
     }
 }

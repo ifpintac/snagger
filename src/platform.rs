@@ -121,12 +121,105 @@ mod imp {
         }
     }
 
+    /// Sleep (not hibernate), like Start → Power → Sleep.
+    pub fn sleep_pc() {
+        unsafe {
+            let _ = windows::Win32::System::Power::SetSuspendState(false, false, false);
+        }
+    }
+
+    pub fn shut_down() {
+        let mut cmd = Command::new("shutdown");
+        cmd.args(["/s", "/t", "0"]);
+        hide_window(&mut cmd);
+        let _ = cmd.spawn();
+    }
+
+    const PROTOCOL_KEY: &str = r"Software\Classes\snag";
+
+    fn reg_set(subkey: &str, name: Option<&str>, value: &str) -> Result<(), String> {
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValueW};
+        let key = wide(OsStr::new(subkey));
+        let name_w = name.map(|n| wide(OsStr::new(n)));
+        let data = wide(OsStr::new(value));
+        let err = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                name_w.as_ref().map_or(PCWSTR::null(), |n| PCWSTR(n.as_ptr())),
+                REG_SZ.0,
+                Some(data.as_ptr() as *const core::ffi::c_void),
+                (data.len() * 2) as u32,
+            )
+        };
+        if err.0 == 0 { Ok(()) } else { Err(format!("Windows refused (error {})", err.0)) }
+    }
+
+    /// Makes `snag:<link>` addresses (the browser button) open this Snag.exe.
+    /// Per-user (HKEY_CURRENT_USER); no admin rights needed.
+    pub fn register_protocol(exe: &Path) -> Result<(), String> {
+        let exe = exe.display().to_string();
+        reg_set(PROTOCOL_KEY, None, "URL:Snag")?;
+        reg_set(PROTOCOL_KEY, Some("URL Protocol"), "")?;
+        reg_set(&format!(r"{PROTOCOL_KEY}\DefaultIcon"), None, &format!("\"{exe}\",0"))?;
+        reg_set(&format!(r"{PROTOCOL_KEY}\shell\open\command"), None, &format!("\"{exe}\" \"%1\""))
+    }
+
+    pub fn unregister_protocol() {
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteTreeW};
+        let key = wide(OsStr::new(PROTOCOL_KEY));
+        unsafe {
+            let _ = RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr()));
+        }
+    }
+
+    /// The command `snag:` links run, if any.
+    pub fn protocol_command() -> Option<String> {
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+        let key = wide(OsStr::new(&format!(r"{PROTOCOL_KEY}\shell\open\command")));
+        let mut buf = vec![0u16; 1024];
+        let mut len = (buf.len() * 2) as u32;
+        let err = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                PCWSTR::null(),
+                RRF_RT_REG_SZ,
+                None,
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                Some(&mut len),
+            )
+        };
+        if err.0 != 0 {
+            return None;
+        }
+        let chars = (len as usize / 2).saturating_sub(1);
+        Some(String::from_utf16_lossy(&buf[..chars.min(buf.len())]))
+    }
+
     pub fn hide_path(path: &Path) {
         use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, SetFileAttributesW};
         let w = wide(path.as_os_str());
         unsafe {
             let _ = SetFileAttributesW(PCWSTR(w.as_ptr()), FILE_ATTRIBUTE_HIDDEN);
         }
+    }
+
+    /// True when Windows "Animation effects" (Show animations) is off.
+    pub fn reduced_motion() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        let mut on = windows::core::BOOL(1);
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some(&mut on as *mut _ as *mut _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        ok.is_ok() && !on.as_bool()
     }
 
     pub fn keep_awake(on: bool) {
@@ -290,8 +383,20 @@ mod imp {
         shell_open(dir.as_os_str());
     }
 
+    pub fn reduced_motion() -> bool {
+        false
+    }
     pub fn keep_awake(_on: bool) {}
     pub fn hide_path(_path: &Path) {}
+    pub fn sleep_pc() {}
+    pub fn shut_down() {}
+    pub fn register_protocol(_exe: &Path) -> Result<(), String> {
+        Err("Only on Windows".into())
+    }
+    pub fn unregister_protocol() {}
+    pub fn protocol_command() -> Option<String> {
+        None
+    }
     pub fn free_space(_path: &Path) -> Option<u64> {
         None
     }

@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod clipwatch;
+mod direct;
 mod engine;
 mod hub;
 mod ipc;
@@ -27,7 +28,10 @@ fn links_from_args() -> Vec<String> {
     let mut links = Vec::new();
     for arg in std::env::args().skip(1) {
         let path = Path::new(&arg);
-        if path.is_file() {
+        if let Some(link) = util::from_snag_scheme(&arg) {
+            // From the browser button: snag:<page address>
+            links.push(link);
+        } else if path.is_file() {
             if let Ok(bytes) = std::fs::read(path) {
                 let text = String::from_utf8_lossy(&bytes);
                 let is_url_file = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("url"));

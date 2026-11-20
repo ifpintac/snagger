@@ -19,6 +19,36 @@ pub struct Dirty {
     pub settings: bool,
 }
 
+/// What to do once the queue runs dry. Picked per session, used once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WhenDone {
+    #[default]
+    Nothing,
+    OpenFolder,
+    Sleep,
+    ShutDown,
+}
+
+impl WhenDone {
+    pub const ALL: [WhenDone; 4] = [WhenDone::Nothing, WhenDone::OpenFolder, WhenDone::Sleep, WhenDone::ShutDown];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WhenDone::Nothing => "Do nothing",
+            WhenDone::OpenFolder => "Open the download folder",
+            WhenDone::Sleep => "Put the PC to sleep",
+            WhenDone::ShutDown => "Shut down the PC",
+        }
+    }
+
+    pub fn is_power(self) -> bool {
+        matches!(self, WhenDone::Sleep | WhenDone::ShutDown)
+    }
+}
+
+/// Seconds of warning before Snag sleeps or shuts down the PC.
+pub const POWER_COUNTDOWN: u64 = 60;
+
 pub struct Core {
     pub settings: Settings,
     pub jobs: Vec<Job>,
@@ -37,9 +67,34 @@ pub struct Core {
     pub handled: Vec<String>,
     pub toasts: Vec<String>,
     pub dirty: Dirty,
+    pub when_done: WhenDone,
+    /// A sleep or shut-down that fires at this time unless cancelled.
+    pub power_at: Option<(WhenDone, u64)>,
+    /// "Start now" pressed while outside the download hours.
+    pub window_override: bool,
 }
 
 impl Core {
+    fn new(settings: Settings, jobs: Vec<Job>, history: Vec<HistoryItem>, subs: Vec<Subscription>) -> Core {
+        Core {
+            settings,
+            jobs,
+            history,
+            subs,
+            engine: EngineState::default(),
+            queue_paused: false,
+            inbox: Vec::new(),
+            clip_offer: Vec::new(),
+            clip_ignore: String::new(),
+            handled: Vec::new(),
+            toasts: Vec::new(),
+            dirty: Dirty::default(),
+            when_done: WhenDone::Nothing,
+            power_at: None,
+            window_override: false,
+        }
+    }
+
     fn load() -> Core {
         let settings: Settings = load_json::<Option<Settings>>("settings.json").unwrap_or_default().sanitized();
         let mut jobs: Vec<Job> = load_json("queue.json");
@@ -54,20 +109,7 @@ impl Core {
                 j.progress = j.progress.min(0.999);
             }
         }
-        Core {
-            settings,
-            jobs,
-            history: load_json("history.json"),
-            subs: load_json("subscriptions.json"),
-            engine: EngineState::default(),
-            queue_paused: false,
-            inbox: Vec::new(),
-            clip_offer: Vec::new(),
-            clip_ignore: String::new(),
-            handled: Vec::new(),
-            toasts: Vec::new(),
-            dirty: Dirty::default(),
-        }
+        Core::new(settings, jobs, load_json("history.json"), load_json("subscriptions.json"))
     }
 
     pub fn job(&self, id: &str) -> Option<&Job> {
@@ -335,6 +377,29 @@ impl Core {
     }
 }
 
+/// A download that went wrong: back to the queue for another try later when
+/// it looks like a passing problem (a dropped connection, a busy server, too
+/// many requests), otherwise marked failed.
+pub fn fail_or_retry(j: &mut Job, error: String, auto_retry: bool) {
+    let delay = if auto_retry { util::retry_delay(&error, j.auto_retries) } else { None };
+    match delay {
+        Some(secs) => {
+            j.auto_retries += 1;
+            j.status = Status::Queued;
+            j.retry_at = util::now() + secs;
+            j.push_log(format!("Trying again in {secs} s: {error}"));
+            j.note = error;
+            j.error.clear();
+        }
+        None => {
+            j.status = Status::Failed;
+            j.finished = util::now();
+            j.error = error;
+            j.retry_at = 0;
+        }
+    }
+}
+
 /// Removes a job's partial data and its per-job archive.
 pub fn discard_job_files(j: &Job) {
     if let Some(s) = &j.staging
@@ -361,6 +426,13 @@ pub struct Hub(Arc<Inner>);
 impl Hub {
     pub fn load() -> Hub {
         Hub(Arc::new(Inner { core: Mutex::new(Core::load()), wake: Mutex::new(None), ctx: OnceLock::new() }))
+    }
+
+    /// A hub that reads and writes nothing, for tests.
+    #[cfg(test)]
+    pub fn load_empty() -> Hub {
+        let core = Core::new(Settings::default(), Vec::new(), Vec::new(), Vec::new());
+        Hub(Arc::new(Inner { core: Mutex::new(core), wake: Mutex::new(None), ctx: OnceLock::new() }))
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Core> {
