@@ -138,7 +138,21 @@ impl Core {
 
     // -- adding --------------------------------------------------------------
 
-    pub fn add_job(&mut self, job: Job) -> String {
+    pub fn add_job(&mut self, mut job: Job) -> String {
+        // Links from the browser extension bring their page and title.
+        if job.opts.referer.is_empty()
+            && let Some(r) = util::link_referer(&job.url)
+        {
+            job.opts.referer = r;
+        }
+        if job.opts.title.is_empty()
+            && let Some(t) = util::link_title(&job.url)
+        {
+            job.opts.title = t;
+        }
+        if job.title.is_empty() && !job.opts.title.is_empty() {
+            job.title = job.opts.title.clone();
+        }
         let id = job.id.clone();
         self.jobs.push(job);
         self.dirty.queue = true;

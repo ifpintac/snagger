@@ -735,13 +735,72 @@ pub fn encode_url(url: &str) -> String {
     out
 }
 
-/// The link inside a `snag:` address (what the browser button sends).
-pub fn from_snag_scheme(arg: &str) -> Option<String> {
+/// What a `snag:` address carries: the link, and from the browser
+/// extension also the page it was found on and that page's title.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SnagLink {
+    pub link: String,
+    pub referer: String,
+    pub title: String,
+}
+
+/// Reads `snag:<link>` (the browser button) or
+/// `snag:<link>&referer=<page>&title=<title>` (the extension; every part is
+/// percent-encoded, so a raw `&` only ever separates them).
+pub fn parse_snag(arg: &str) -> Option<SnagLink> {
     let rest = arg.strip_prefix("snag:").or_else(|| arg.strip_prefix("SNAG:"))?;
     let rest = rest.trim_start_matches('/');
-    let decoded = percent_decode(rest);
-    let decoded = decoded.trim_end_matches('/').to_string();
-    extract_links(&decoded).into_iter().next()
+    let mut parts = rest.split('&');
+    let first = parts.next().unwrap_or("");
+    let decoded = percent_decode(first);
+    let link = extract_links(decoded.trim_end_matches('/')).into_iter().next()?;
+    let mut out = SnagLink { link, ..Default::default() };
+    for part in parts {
+        match part.split_once('=') {
+            Some(("referer", v)) => out.referer = percent_decode(v).trim().to_string(),
+            Some(("title", v)) => out.title = percent_decode(v).trim().to_string(),
+            _ => {}
+        }
+    }
+    Some(out)
+}
+
+/// The link inside a `snag:` address.
+pub fn from_snag_scheme(arg: &str) -> Option<String> {
+    parse_snag(arg).map(|s| s.link)
+}
+
+type LinkMeta = std::sync::Mutex<std::collections::HashMap<String, (String, String)>>;
+
+fn link_meta() -> &'static LinkMeta {
+    static META: std::sync::OnceLock<LinkMeta> = std::sync::OnceLock::new();
+    META.get_or_init(Default::default)
+}
+
+/// Remembers the page a link was found on (sent as Referer, which many
+/// video servers insist on) and a title for the file.
+pub fn remember_link(link: &str, referer: &str, title: &str) {
+    if referer.is_empty() && title.is_empty() {
+        return;
+    }
+    let mut m = link_meta().lock().unwrap_or_else(|p| p.into_inner());
+    let e = m.entry(link.to_string()).or_default();
+    if !referer.is_empty() {
+        e.0 = referer.to_string();
+    }
+    if !title.is_empty() {
+        e.1 = title.to_string();
+    }
+}
+
+pub fn link_referer(link: &str) -> Option<String> {
+    let m = link_meta().lock().unwrap_or_else(|p| p.into_inner());
+    m.get(link).map(|e| e.0.clone()).filter(|r| !r.is_empty())
+}
+
+pub fn link_title(link: &str) -> Option<String> {
+    let m = link_meta().lock().unwrap_or_else(|p| p.into_inner());
+    m.get(link).map(|e| e.1.clone()).filter(|t| !t.is_empty())
 }
 
 /// File types Snagger downloads itself, without yt-dlp, when a link ends in them.
@@ -877,6 +936,29 @@ mod tests {
         assert!(disk_full(&msg));
         assert!(disk_full(&friendly_error("ERROR: [Errno 28] No space left on device", "")));
         assert!(!disk_full("HTTP Error 403: Forbidden"));
+    }
+
+    #[test]
+    fn extension_links_carry_their_page() {
+        let enc = |s: &str| s.bytes().map(|b| format!("%{b:02X}")).collect::<String>();
+        let arg = format!(
+            "snag:{}&referer={}&title={}",
+            enc("https://cdn.example.com/v/master.m3u8?sig=a&b=c"),
+            enc("https://www.behance.net/gallery/1/Project"),
+            enc("Paper Boats & more")
+        );
+        let s = parse_snag(&arg).unwrap();
+        assert_eq!(s.link, "https://cdn.example.com/v/master.m3u8?sig=a&b=c");
+        assert_eq!(s.referer, "https://www.behance.net/gallery/1/Project");
+        assert_eq!(s.title, "Paper Boats & more");
+        // The browser button's plain form still works.
+        assert_eq!(
+            parse_snag("snag:https%3A%2F%2Fvimeo.com%2F1").unwrap(),
+            SnagLink { link: "https://vimeo.com/1".into(), ..Default::default() }
+        );
+        remember_link(&s.link, &s.referer, &s.title);
+        assert_eq!(link_referer(&s.link).as_deref(), Some("https://www.behance.net/gallery/1/Project"));
+        assert_eq!(link_title("https://nowhere.example/x"), None);
     }
 
     #[test]

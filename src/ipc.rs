@@ -82,7 +82,12 @@ fn handle(hub: &Hub, stream: TcpStream, token: &str) {
     for line in reader.lines().map_while(Result::ok) {
         let line = line.trim();
         if let Some(url) = line.strip_prefix("ADD ") {
-            links.extend(util::extract_links(url));
+            if util::from_snag_scheme(url).is_some() {
+                // Kept whole: it carries the page and title (see SnagApp).
+                links.push(url.to_string());
+            } else {
+                links.extend(util::extract_links(url));
+            }
         } else if line == "SHOW" {
             show = true;
         } else if line == "END" {

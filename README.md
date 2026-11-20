@@ -9,7 +9,7 @@ and the file lands in `Downloads\Snagger`.
 
 ## Look
 
-Snagger 2.5 looks like a command console: one pale ice-blue line colour on
+Snagger 2.6 looks like a command console: one pale ice-blue line colour on
 near-black, hairline modules, clipped-corner frames and keys that light up.
 Dark by default; Settings → Theme has a light version too. The design notes
 (tokens, audit, test tasks) are in `docs/design-console.md`, with screenshots
@@ -35,6 +35,15 @@ Double-click **Snagger.exe**. The first launch fetches the download engine
   download it (or, if you choose, queues it straight away).
 - **Browser button**: Settings → Browser button adds a "Snag it" bookmark; on
   any video page, click it and that page opens in Snagger (via `snag:` links).
+- **Browser extension** (Edge or Chrome; Settings → Browser button → Set up
+  the extension, then "Load unpacked"): a toolbar button that lists the
+  streams and files the page has played (HLS, DASH, MP4…), even on sites
+  yt-dlp can't read, and sends one with the page as Referer and its title as
+  the file name; right-click "Snag this link / video / page". The extension
+  lives in `extension/` and ships inside Snagger.exe.
+- **Download shortcut**: copy a link anywhere and press Ctrl+Alt+D (or
+  Ctrl+Shift+D): it's queued with your default quality, even while the window
+  is closed.
 - `Snagger.exe <link>` or "Open with" passes links to the window that's already open.
 
 **Plain files**: a link to a file rather than a page (`.zip`, `.pdf`, `.psd`,
@@ -93,8 +102,19 @@ checked for a file too.
 - Speed limit, retries, proxy, sign-in from your browser (Firefox, Chrome,
   Edge, Brave…) or a cookies.txt file for private or members-only videos.
 - Optional download archive: skip anything Snagger has ever downloaded.
+- The video's description (links, chapter list) saved as `.description.txt`.
+- **Change quality…** for downloads that are waiting, paused or failed.
+- **In the background**: closing the window keeps Snagger in the tray (by the
+  clock) and downloads carry on; it can start in the tray with Windows.
+  A Windows notification says when a batch finishes.
 
-**History** lists everything saved, searchable, with Open, Show in folder and
+**Tools** for finished files (in each row's ⋮ menu): **Make smaller…** to fit
+10/25/50/100 MB or any size (two-pass, sized to fit), **Make a GIF…** of up to
+60 seconds, and **Split into tracks by chapters**. Results are saved next to
+the original.
+
+**History** lists everything saved, searchable (also by what was said, from
+the transcripts: "robot hand" finds the scene), with Open, Show in folder and
 Download again. **Subscriptions** follow channels and playlists and download
 only new videos, on demand or every 6 hours / daily while Snagger is open.
 

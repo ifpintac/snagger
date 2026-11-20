@@ -148,6 +148,17 @@ impl eframe::App for SnagApp {
             theme::apply_style(ctx, theme);
             self.theme = Some(theme);
         }
+        // snag: addresses carry the page a link was found on and its title.
+        let inbox: Vec<String> = inbox
+            .into_iter()
+            .map(|l| match util::parse_snag(&l) {
+                Some(s) => {
+                    util::remember_link(&s.link, &s.referer, &s.title);
+                    s.link
+                }
+                None => l,
+            })
+            .collect();
         if !inbox.is_empty() {
             self.tab = Tab::Downloads;
             self.dl.receive_links(&self.hub, inbox);

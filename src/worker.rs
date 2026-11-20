@@ -82,6 +82,7 @@ fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
                 job.live = Live { stage: Stage::Starting, ..Default::default() };
                 job.error.clear();
                 job.note.clear();
+                util::remember_link(&job.url, &job.opts.referer, &job.opts.title);
                 let args = ytdlp::download_args(job, &settings, &paths, &staging, &archive);
                 job.push_log(format!("Starting: {}", job.url));
                 let is_sub = !job.opts.sub_id.is_empty();

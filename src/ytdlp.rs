@@ -227,6 +227,14 @@ pub fn download_args(job: &Job, s: &Settings, p: &EnginePaths, staging: &Path, a
         push(&mut a, &["--limit-rate", &format!("{}K", s.speed_limit_kb)]);
     }
 
+    if !job.opts.referer.is_empty() {
+        push(&mut a, &["--referer", &job.opts.referer]);
+    }
+    // A raw stream is called "master" or "index"; the page's title is better.
+    if !job.opts.title.is_empty() && job.opts.playlist != PlaylistMode::Whole {
+        let title = job.opts.title.replace('\\', "\\\\");
+        push(&mut a, &["--replace-in-metadata", "title", "^.*$", &title]);
+    }
     match job.opts.playlist {
         PlaylistMode::Auto => {}
         PlaylistMode::Single => a.push("--no-playlist".into()),
@@ -345,6 +353,9 @@ pub fn caption_args(url: &str, s: &Settings, p: &EnginePaths, out: &Path, langs:
     );
     if p.ffmpeg.is_some() {
         push(&mut a, &["--convert-subs", "vtt"]);
+    }
+    if let Some(r) = util::link_referer(url) {
+        push(&mut a, &["--referer", &r]);
     }
     a.push("--paths".into());
     a.push(out.as_os_str().to_owned());
@@ -486,6 +497,9 @@ pub fn probe(
     let mut args: Vec<OsString> = Vec::new();
     common_args(s, paths, &mut args);
     push(&mut args, &["-J", "--flat-playlist", "--no-warnings"]);
+    if let Some(r) = util::link_referer(url) {
+        push(&mut args, &["--referer", &r]);
+    }
     match mode {
         PlaylistMode::Single | PlaylistMode::Auto => args.push("--no-playlist".into()),
         PlaylistMode::Whole => args.push("--yes-playlist".into()),
@@ -493,7 +507,13 @@ pub fn probe(
     args.push("--".into());
     args.push(url.into());
     let info = run_json(paths, s, args, ctl)?;
-    Ok(read_probe(&info, url, s))
+    let mut probe = read_probe(&info, url, s);
+    // A raw stream from the extension is called "master" or "index": the
+    // page's title says what it is.
+    if let Some(t) = util::link_title(url) {
+        probe.title = t;
+    }
+    Ok(probe)
 }
 
 /// Where a search runs.

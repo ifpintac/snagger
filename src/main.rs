@@ -9,6 +9,7 @@ mod background;
 mod clipwatch;
 mod direct;
 mod engine;
+mod extension;
 mod hub;
 mod ipc;
 mod manager;
@@ -31,9 +32,9 @@ fn links_from_args() -> Vec<String> {
     let mut links = Vec::new();
     for arg in std::env::args().skip(1) {
         let path = Path::new(&arg);
-        if let Some(link) = util::from_snag_scheme(&arg) {
-            // From the browser button: snag:<page address>
-            links.push(link);
+        if util::from_snag_scheme(&arg).is_some() {
+            // From the browser button or extension: kept whole (see SnagApp).
+            links.push(arg.clone());
         } else if path.is_file() {
             if let Ok(bytes) = std::fs::read(path) {
                 let text = String::from_utf8_lossy(&bytes);
@@ -85,6 +86,7 @@ fn main() -> eframe::Result {
 
     let hub = hub::Hub::load();
     background::register_notifications();
+    extension::refresh_if_set_up();
     ipc::listen(&hub);
     engine::start(&hub);
     manager::start(&hub);

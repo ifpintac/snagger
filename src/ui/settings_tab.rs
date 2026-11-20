@@ -532,6 +532,50 @@ fn browser_section(ui: &mut Ui, hub: &Hub) {
                 platform::unregister_protocol();
             }
         });
+
+        // The extension: for streams on sites Snagger can't read by itself.
+        ui.add_space(t.s(4));
+        ui.label(widgets::field_label(ui, "Extension for Edge or Chrome"));
+        ui.add_space(t.s(1));
+        widgets::hint(
+            ui,
+            "A toolbar button that lists the videos a page plays, even on sites Snagger can't read by itself (Behance, portfolio sites, most embedded players), plus “Snag this link” when you right-click a link.",
+        );
+        ui.add_space(widgets::SECTION_GAP);
+        let set_up = crate::extension::folder().join("manifest.json").is_file();
+        ui.horizontal(|ui| {
+            let label = if set_up { "Show the extension's folder" } else { "Set up the extension" };
+            if Button::secondary(label).icon(Icon::Package).enabled(exe.is_some()).show(ui).clicked()
+                && let Some(exe) = &exe
+            {
+                // Links come back to Snagger through the same snag: address.
+                let result = if ours { Ok(()) } else { platform::register_protocol(exe) };
+                match result.and_then(|_| crate::extension::write().map_err(|e| e.to_string())) {
+                    Ok(dir) => {
+                        platform::open_path(&dir);
+                    }
+                    Err(e) => hub.lock().toast(format!("Couldn't set up the extension: {e}")),
+                }
+            }
+            if Button::quiet("Copy edge://extensions").show(ui).clicked() {
+                hub.lock().clip_ignore = "edge://extensions".into();
+                ui.ctx().copy_text("edge://extensions".into());
+            }
+        });
+        if set_up {
+            ui.add_space(t.s(1));
+            for (n, step) in [
+                "Open edge://extensions in Edge (chrome://extensions in Chrome).",
+                "Turn on Developer mode.",
+                "Click Load unpacked and pick the folder Snagger opened (…\\Snagger\\browser-extension).",
+                "Pin the Snagger button to the toolbar. The first time it sends a link, tick “Always allow” and choose Open.",
+            ]
+            .iter()
+            .enumerate()
+            {
+                ui.label(widgets::muted(ui, format!("{}. {step}", n + 1)));
+            }
+        }
     });
 }
 

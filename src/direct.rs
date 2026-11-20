@@ -63,6 +63,7 @@ fn agent(body_timeout: Option<Duration>) -> ureq::Agent {
 pub fn inspect(url: &str) -> Result<Probe, String> {
     let resp = agent(Some(Duration::from_secs(15)))
         .get(&util::encode_url(url))
+        .header("Referer", util::link_referer(url).unwrap_or_default())
         .header("Range", "bytes=0-0")
         .header("Accept-Encoding", "identity")
         .call()
@@ -205,6 +206,7 @@ pub fn run(hub: &Hub, id: &str, ctl: &Arc<Control>) {
             job.error.clear();
             job.note.clear();
             job.push_log(format!("Starting: {}", job.url));
+            util::remember_link(&job.url, &job.opts.referer, &job.opts.title);
             (job.url.clone(), dest, staging, s.connections.max(1), s.speed_limit_kb as u64 * 1024)
         })
     };
@@ -241,7 +243,15 @@ fn download(
     if st.url != url || st.size != probe.size || st.ranges != probe.ranges {
         st = State {
             url: url.into(),
-            name: probe.name.clone(),
+            // The extension's page title beats a server's "video.mp4".
+            name: match util::link_title(url) {
+                Some(t) => {
+                    let ext = Path::new(&probe.name).extension().map(|e| e.to_string_lossy().into_owned());
+                    let base = util::safe_name(&t, 150);
+                    ext.map_or(base.clone(), |e| format!("{base}.{e}"))
+                }
+                None => probe.name.clone(),
+            },
             size: probe.size,
             ranges: probe.ranges,
             ..Default::default()
@@ -429,6 +439,7 @@ fn fetch_range(
 ) -> Result<(), Fail> {
     let resp = agent
         .get(&sh.url)
+        .header("Referer", util::link_referer(&sh.url).unwrap_or_default())
         .header("Range", &format!("bytes={start}-{end}"))
         .header("Accept-Encoding", "identity")
         .call()
@@ -474,7 +485,10 @@ fn single(
     limit: u64,
 ) -> Result<(), Fail> {
     let have = if st.ranges { fs::metadata(data_path).map(|m| m.len()).unwrap_or(0) } else { 0 };
-    let mut req = agent(None).get(url).header("Accept-Encoding", "identity");
+    let mut req = agent(None)
+        .get(url)
+        .header("Accept-Encoding", "identity")
+        .header("Referer", util::link_referer(url).unwrap_or_default());
     if have > 0 {
         req = req.header("Range", &format!("bytes={have}-"));
     }

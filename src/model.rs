@@ -202,6 +202,11 @@ pub struct JobOptions {
     pub break_on_existing: bool,
     /// A plain file link, downloaded by Snagger's own engine instead of yt-dlp.
     pub direct: bool,
+    /// The page the link was found on (sent as Referer), from the extension.
+    pub referer: String,
+    /// A title for the file, from the extension (for raw streams, which
+    /// have none of their own).
+    pub title: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

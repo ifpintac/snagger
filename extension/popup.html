@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snagger</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header class="module">
+  <span class="mark">Snagger</span>
+</header>
+
+<section class="page">
+  <div class="page-text">
+    <div id="page-title" class="title">This page</div>
+    <div id="page-host" class="value"></div>
+  </div>
+  <button id="send-page" class="key primary" type="button">
+    <span class="icon" style="--icon:url(icons/ph/download-simple-thin.svg)" aria-hidden="true"></span>
+    Send this page
+  </button>
+  <p class="hint">Works on YouTube, TikTok, Instagram, X, Vimeo and 1,800 other sites.</p>
+</section>
+
+<section class="streams">
+  <h2 class="module-title">Played on this page</h2>
+  <ul id="list" aria-live="polite"></ul>
+  <p id="empty" class="hint" hidden>Nothing yet. Play the video on the page, then open this again: its stream shows up here, even on sites Snagger can't read by itself.</p>
+</section>
+
+<footer class="hint">The first time, your browser asks to open Snagger. Tick “Always allow”, then Open.</footer>
+
+<script type="module" src="popup.js"></script>
+</body>
+</html>
