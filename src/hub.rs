@@ -1,0 +1,394 @@
+//! The state shared by the window, the queue manager and the download
+//! threads, and the operations the UI performs on it.
+
+use std::collections::HashSet;
+use std::fs;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+
+use crate::engine::EngineState;
+use crate::model::{Control, HistoryItem, Job, JobOptions, STOP_CANCEL, STOP_PAUSE, Status, Subscription};
+use crate::settings::{self, Settings, load_json};
+use crate::util;
+
+#[derive(Default, Clone, Copy)]
+pub struct Dirty {
+    pub queue: bool,
+    pub history: bool,
+    pub subs: bool,
+    pub settings: bool,
+}
+
+pub struct Core {
+    pub settings: Settings,
+    pub jobs: Vec<Job>,
+    pub history: Vec<HistoryItem>,
+    pub subs: Vec<Subscription>,
+    pub engine: EngineState,
+    pub queue_paused: bool,
+    /// Links handed over by a second launch of Snag (command line, "Open with").
+    pub inbox: Vec<String>,
+    /// Links noticed on the clipboard, waiting for the user to decide.
+    pub clip_offer: Vec<String>,
+    /// Text Snag itself just copied, so the watcher ignores it.
+    pub clip_ignore: String,
+    /// Links the window already took (pasted, previewed), so the clipboard
+    /// watcher doesn't offer them again.
+    pub handled: Vec<String>,
+    pub toasts: Vec<String>,
+    pub dirty: Dirty,
+}
+
+impl Core {
+    fn load() -> Core {
+        let settings: Settings = load_json::<Option<Settings>>("settings.json").unwrap_or_default().sanitized();
+        let mut jobs: Vec<Job> = load_json("queue.json");
+        for j in &mut jobs {
+            // Downloads that were running when Snag closed pick up where they left off.
+            if j.status == Status::Running {
+                j.status = if settings.resume_on_start { Status::Queued } else { Status::Paused };
+            } else if j.status == Status::Queued && !settings.resume_on_start {
+                j.status = Status::Paused;
+            }
+            if !j.status.is_finished() {
+                j.progress = j.progress.min(0.999);
+            }
+        }
+        Core {
+            settings,
+            jobs,
+            history: load_json("history.json"),
+            subs: load_json("subscriptions.json"),
+            engine: EngineState::default(),
+            queue_paused: false,
+            inbox: Vec::new(),
+            clip_offer: Vec::new(),
+            clip_ignore: String::new(),
+            handled: Vec::new(),
+            toasts: Vec::new(),
+            dirty: Dirty::default(),
+        }
+    }
+
+    pub fn job(&self, id: &str) -> Option<&Job> {
+        self.jobs.iter().find(|j| j.id == id)
+    }
+
+    pub fn job_mut(&mut self, id: &str) -> Option<&mut Job> {
+        self.jobs.iter_mut().find(|j| j.id == id)
+    }
+
+    pub fn toast(&mut self, msg: impl Into<String>) {
+        self.toasts.push(msg.into());
+    }
+
+    // -- adding --------------------------------------------------------------
+
+    pub fn add_job(&mut self, job: Job) -> String {
+        let id = job.id.clone();
+        self.jobs.push(job);
+        self.dirty.queue = true;
+        id
+    }
+
+    /// Adds many links with one set of options. Skips links that are already
+    /// waiting or downloading. Returns (added, skipped).
+    pub fn add_links(&mut self, links: &[String], opts: &JobOptions) -> (usize, usize) {
+        let pending: HashSet<String> = self
+            .jobs
+            .iter()
+            .filter(|j| j.status.is_active() || j.status == Status::Paused)
+            .map(|j| j.url.clone())
+            .collect();
+        let mut added = 0;
+        let mut skipped = 0;
+        for url in links {
+            if pending.contains(url) {
+                skipped += 1;
+                continue;
+            }
+            self.add_job(Job::new(url, opts.clone()));
+            added += 1;
+        }
+        (added, skipped)
+    }
+
+    pub fn is_queued(&self, url: &str) -> bool {
+        self.jobs.iter().any(|j| j.url == url && (j.status.is_active() || j.status == Status::Paused))
+    }
+
+    // -- controlling jobs ----------------------------------------------------
+
+    pub fn pause(&mut self, id: &str) {
+        if let Some(j) = self.job_mut(id) {
+            match j.status {
+                Status::Running => {
+                    if let Some(c) = &j.control {
+                        c.request(STOP_PAUSE);
+                    }
+                }
+                Status::Queued => j.status = Status::Paused,
+                _ => {}
+            }
+            self.dirty.queue = true;
+        }
+    }
+
+    pub fn resume(&mut self, id: &str) {
+        if let Some(j) = self.job_mut(id)
+            && matches!(j.status, Status::Paused | Status::Failed | Status::Cancelled)
+        {
+            if j.status == Status::Cancelled {
+                j.progress = 0.0;
+                j.items_done = 0;
+                j.items_failed = 0;
+            }
+            j.requeue();
+            self.dirty.queue = true;
+        }
+    }
+
+    /// Downloads again from scratch (keeps the same row).
+    pub fn redo(&mut self, id: &str) {
+        if let Some(j) = self.job_mut(id)
+            && j.status.is_finished()
+        {
+            let url = j.url.clone();
+            let opts = j.opts.clone();
+            let mut fresh = Job::new(&url, opts);
+            fresh.title = j.title.clone();
+            fresh.thumb = j.thumb.clone();
+            fresh.site = j.site.clone();
+            *j = fresh;
+            self.dirty.queue = true;
+        }
+    }
+
+    pub fn cancel(&mut self, id: &str) {
+        if let Some(j) = self.job_mut(id) {
+            match j.status {
+                Status::Running => {
+                    if let Some(c) = &j.control {
+                        c.request(STOP_CANCEL);
+                    }
+                }
+                Status::Queued | Status::Paused => {
+                    j.status = Status::Cancelled;
+                    j.live = Default::default();
+                    j.finished = util::now();
+                    if let Some(s) = j.staging.take() {
+                        let _ = fs::remove_dir_all(s);
+                    }
+                }
+                _ => {}
+            }
+            self.dirty.queue = true;
+        }
+    }
+
+    pub fn remove(&mut self, id: &str) {
+        if let Some(pos) = self.jobs.iter().position(|j| j.id == id) {
+            let j = self.jobs.remove(pos);
+            if j.status == Status::Running {
+                // The download thread cleans up its own folder when it ends.
+                if let Some(c) = &j.control {
+                    c.request(STOP_CANCEL);
+                }
+            } else {
+                discard_job_files(&j);
+            }
+            self.dirty.queue = true;
+        }
+    }
+
+    pub fn pause_all(&mut self) {
+        self.queue_paused = true;
+        let ids: Vec<String> = self.jobs.iter().filter(|j| j.status.is_active()).map(|j| j.id.clone()).collect();
+        for id in ids {
+            self.pause(&id);
+        }
+    }
+
+    pub fn resume_all(&mut self) {
+        self.queue_paused = false;
+        for j in self.jobs.iter_mut().filter(|j| j.status == Status::Paused) {
+            j.requeue();
+        }
+        self.dirty.queue = true;
+    }
+
+    pub fn retry_failed(&mut self) -> usize {
+        let mut n = 0;
+        for j in self.jobs.iter_mut() {
+            let partial_playlist = j.status == Status::Done && j.items_failed > 0;
+            if j.status == Status::Failed || partial_playlist {
+                j.requeue();
+                j.items_failed = 0;
+                n += 1;
+            }
+        }
+        self.dirty.queue = true;
+        n
+    }
+
+    pub fn clear_finished(&mut self) {
+        let (keep, drop): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.jobs)
+            .into_iter()
+            .partition(|j| !(j.status == Status::Done || j.status == Status::Cancelled));
+        for j in &drop {
+            discard_job_files(j);
+        }
+        self.jobs = keep;
+        self.dirty.queue = true;
+    }
+
+    pub fn clear_failed(&mut self) {
+        let (keep, drop): (Vec<Job>, Vec<Job>) =
+            std::mem::take(&mut self.jobs).into_iter().partition(|j| j.status != Status::Failed);
+        for j in &drop {
+            discard_job_files(j);
+        }
+        self.jobs = keep;
+        self.dirty.queue = true;
+    }
+
+    /// Moves a waiting job to the front of the queue.
+    pub fn move_to_top(&mut self, id: &str) {
+        if let Some(pos) = self.jobs.iter().position(|j| j.id == id) {
+            let j = self.jobs.remove(pos);
+            let first_waiting = self.jobs.iter().position(|j| j.status == Status::Queued).unwrap_or(0);
+            self.jobs.insert(first_waiting, j);
+            self.dirty.queue = true;
+        }
+    }
+
+    pub fn move_to_bottom(&mut self, id: &str) {
+        if let Some(pos) = self.jobs.iter().position(|j| j.id == id) {
+            let j = self.jobs.remove(pos);
+            self.jobs.push(j);
+            self.dirty.queue = true;
+        }
+    }
+
+    // -- subscriptions -------------------------------------------------------
+
+    /// Queues a download of whatever is new in a subscription.
+    pub fn check_subscription(&mut self, sub_id: &str) -> bool {
+        let Some(s) = self.subs.iter().find(|s| s.id == sub_id).cloned() else { return false };
+        let busy =
+            self.jobs.iter().any(|j| j.opts.sub_id == s.id && (j.status.is_active() || j.status == Status::Paused));
+        if busy {
+            return false;
+        }
+        let opts = JobOptions {
+            preset: s.preset,
+            folder: s.folder.clone(),
+            sub_id: s.id.clone(),
+            break_on_existing: util::looks_like_channel(&s.url),
+            ..Default::default()
+        };
+        let mut job = Job::new(&s.url, opts);
+        job.title = s.title.clone();
+        self.add_job(job);
+        true
+    }
+
+    pub fn remove_subscription(&mut self, sub_id: &str) {
+        self.subs.retain(|s| s.id != sub_id);
+        self.dirty.subs = true;
+    }
+
+    // -- history -------------------------------------------------------------
+
+    pub fn record_history(&mut self, job: &Job) {
+        if job.files.is_empty() {
+            return;
+        }
+        self.history.insert(
+            0,
+            HistoryItem {
+                id: util::new_id(),
+                url: job.url.clone(),
+                vid: job.vid.clone(),
+                title: job.display_title(),
+                site: job.site.clone(),
+                uploader: job.uploader.clone(),
+                thumb: job.thumb.clone(),
+                preset: job.opts.preset,
+                files: job.files.clone(),
+                folder: job.folder.clone(),
+                bytes: job.bytes,
+                items: job.items_done,
+                finished: util::now(),
+                opts: job.opts.clone(),
+            },
+        );
+        self.history.truncate(5000);
+        self.dirty.history = true;
+    }
+
+    /// A previous download of the same video whose file still exists.
+    pub fn already_downloaded(&self, vid: &str, url: &str) -> Option<&HistoryItem> {
+        self.history
+            .iter()
+            .find(|h| ((!vid.is_empty() && h.vid == vid) || h.url == url) && h.files.iter().any(|f| f.exists()))
+    }
+}
+
+/// Removes a job's partial data and its per-job archive.
+pub fn discard_job_files(j: &Job) {
+    if let Some(s) = &j.staging
+        && j.status != Status::Done
+    {
+        let _ = fs::remove_dir_all(s);
+    }
+    let _ = fs::remove_file(settings::job_archive_path(&j.id));
+}
+
+// --------------------------------------------------------------------------
+// The handle everything shares
+// --------------------------------------------------------------------------
+
+struct Inner {
+    core: Mutex<Core>,
+    wake: Mutex<Option<Sender<()>>>,
+    ctx: OnceLock<eframe::egui::Context>,
+}
+
+#[derive(Clone)]
+pub struct Hub(Arc<Inner>);
+
+impl Hub {
+    pub fn load() -> Hub {
+        Hub(Arc::new(Inner { core: Mutex::new(Core::load()), wake: Mutex::new(None), ctx: OnceLock::new() }))
+    }
+
+    pub fn lock(&self) -> MutexGuard<'_, Core> {
+        self.0.core.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub fn set_waker(&self, tx: Sender<()>) {
+        *self.0.wake.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
+    }
+
+    /// Nudges the queue manager to look for work now.
+    pub fn wake(&self) {
+        if let Some(tx) = self.0.wake.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            let _ = tx.send(());
+        }
+    }
+
+    pub fn set_ctx(&self, ctx: eframe::egui::Context) {
+        let _ = self.0.ctx.set(ctx);
+    }
+
+    pub fn repaint(&self) {
+        if let Some(ctx) = self.0.ctx.get() {
+            ctx.request_repaint();
+        }
+    }
+
+    pub fn new_control() -> Arc<Control> {
+        Arc::new(Control::default())
+    }
+}
